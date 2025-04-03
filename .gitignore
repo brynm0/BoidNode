@@ -1,0 +1,6 @@
+*.exe
+*.json
+.vscode/tasks.json
+shaders/shader_compile.bat
+*.spv
+*.obj
