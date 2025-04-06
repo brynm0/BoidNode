@@ -23,14 +23,18 @@ typedef struct camera
 // Define the world up vector.
 const vec3 WORLD_UP = {0.0f, 1.0f, 0.0f};
 
-// Function: get_camera_right_vec
-// Purpose: Calculates the right vector of the camera and updates the up vector if necessary.
-//
-// Parameters:
-//    - cam: Pointer to the camera struct.
-//
-// Returns:
-//    - A vec3 representing the right vector of the camera.
+/*
+ * @brief Computes the right vector of the camera based on its position, target, and up vector.
+ *
+ * This function calculates the right vector of the camera, which is perpendicular to both
+ * the forward vector (from the camera's position to its target) and the up vector. It also
+ * ensures that the up vector is orthogonal to the forward and right vectors by recomputing it.
+ *
+ * @param cam Pointer to the camera structure. If the pointer is null, a zero vector is returned.
+ *
+ * @return The right vector of the camera as a normalized vec3. If the camera pointer is null,
+ *         a zero vector (vec3{0.0f, 0.0f, 0.0f}) is returned.
+ */
 vec3 get_camera_right_vec(camera *cam)
 {
     if (!cam)
@@ -50,10 +54,25 @@ vec3 get_camera_right_vec(camera *cam)
     return right;
 }
 
-// Function: update_camera_position
-// Purpose: Updates the camera's world position based on its current orbit
-// parameters (yaw, pitch, and distance) and its target position.
-// Yaw is applied first, and only around the world Y-axis.
+/**
+ * @brief Updates the position and orientation of the camera based on its target, distance, pitch, and yaw.
+ *
+ * This function recalculates the camera's position, forward, right, and up vectors to ensure
+ * it is correctly oriented and positioned relative to its target. The camera's position is
+ * determined by applying pitch and yaw rotations to an offset vector, and its orientation
+ * vectors are recalculated to maintain a consistent view direction.
+ *
+ * @param cam Pointer to the camera object to update. If the pointer is null, the function returns immediately.
+ *
+ * Steps:
+ * 1. Initializes the camera's offset position along the X-axis based on its distance from the target.
+ * 2. Applies the pitch rotation around the initial right axis.
+ * 3. Applies the yaw rotation around the world up axis.
+ * 4. Updates the camera's position by adding the rotated offset to the target position.
+ * 5. Computes the forward vector as the normalized direction from the camera's position to its target.
+ * 6. Computes the right vector as the normalized cross product of the forward vector and the world up vector.
+ * 7. Computes the up vector as the normalized cross product of the right and forward vectors to ensure no roll.
+ */
 static void update_camera_position(camera *cam)
 {
     if (!cam)

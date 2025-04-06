@@ -7,6 +7,23 @@ struct vec4
     float x, y, z, w;
 };
 
+struct vec2
+{
+    float x, y;
+
+    // Multiply vec2 * float
+    vec2 operator*(float scalar) const
+    {
+        return {x * scalar, y * scalar};
+    }
+
+    // Multiply float * vec2
+    friend vec2 operator*(float scalar, const vec2 &v)
+    {
+        return {v.x * scalar, v.y * scalar};
+    }
+};
+
 struct mat4
 {
     vec4 m[4]; // 4x4 matrix stored in column-major order

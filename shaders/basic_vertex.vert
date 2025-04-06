@@ -8,7 +8,7 @@ layout(std140, binding = 0) uniform UniformBuffer {
   mat4 MVP;
   mat4 Model;
   mat4 View;
-  vec3 ViewPos; // Camera position in world space
+  vec4 ViewPos; // Camera position in world space
 };
 
 layout(location = 0) out vec3 FragPos;
@@ -29,5 +29,6 @@ void main() {
   TexCoord = inTexCoord;
 
   // Calculate view direction (from fragment to camera)
-  ViewDir = ViewPos - FragPos;
+  ViewDir = ViewPos.xyz - FragPos;
+  // }
 }

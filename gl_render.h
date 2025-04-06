@@ -46,6 +46,38 @@ extern "C"
 #include "GL/glew.h"
 #include "GL/wglew.h"
 #include "GL/GL.h"
+#include "imgui.h"
+#include "imgui_impl_win32.h"
+#include "imgui_impl_opengl3.h"
+
+#include "math_linear.h"
+
+// Modify the UniformBuffer structure to match the shader
+struct ubo_matrix
+{
+    mat4 mvp;
+    mat4 model;
+    mat4 view;
+    vec4 view_pos;
+};
+
+// Add these new structures for lighting
+typedef struct
+{
+    vec4 position;
+    vec4 ambient;
+    vec4 diffuse;
+    vec4 specular;
+} ubo_light;
+
+typedef struct
+{
+    vec4 ambient;
+    vec4 diffuse;
+    vec4 specular;
+    float shininess;
+    float padding[3]; // Padding to ensure 16-byte alignment
+} ubo_material;
 
 // ---------- Internal global variables for window and context ----------
 static HWND gl_hWnd = 0;
@@ -54,14 +86,29 @@ static HGLRC g_hRC = 0;
 static int g_width = 800;
 static int g_height = 600;
 
+struct gl_mesh
+{
+    GLuint VAO = 0;
+    GLuint VBO = 0;
+    GLuint EBO = 0;         // Element Buffer Object (if using indices)
+    GLuint matrix_ubo = 0;  // Uniform buffer object for matrices
+    GLint mvpLocation = -1; // Uniform location for the MVP matrix
+    mat4 model_matrix = {};
+
+    unsigned int meshVertexCount = 0;
+    unsigned int meshIndexCount = 0;
+};
+
+std::vector<gl_mesh> g_meshes; // Store multiple meshes
+GLuint g_shaderProgram = 0;
 // ---------- Global variables for OpenGL objects ----------
-static GLuint g_shaderProgram = 0;
-static GLuint g_VAO = 0;
-static GLuint g_VBO = 0;
-static GLuint g_EBO = 0;         // Element Buffer Object (if using indices)
-static GLint g_mvpLocation = -1; // Uniform location for the MVP matrix
-static unsigned int g_meshVertexCount = 0;
-static unsigned int g_meshIndexCount = 0;
+// static GLuint g_shaderProgram = 0;
+// static GLuint g_VAO = 0;
+// static GLuint g_VBO = 0;
+// static GLuint g_EBO = 0;         // Element Buffer Object (if using indices)
+// static GLint g_mvpLocation = -1; // Uniform location for the MVP matrix
+// static unsigned int g_meshVertexCount = 0;
+// static unsigned int g_meshIndexCount = 0;
 
 // ---------- Utility function for error handling ----------
 static void gl_check_error(const char *msg)
@@ -145,33 +192,152 @@ static GLuint CreateShaderProgram()
     return program;
 }
 
+// Function pointer for wglChoosePixelFormatARB
+PFNWGLCHOOSEPIXELFORMATARBPROC win_choose_pixel_format_arb = nullptr;
+
+// Dummy window class to get function pointers
+void CreateTemporaryContext()
+{
+
+    HINSTANCE hInstance = GetModuleHandle(nullptr);
+    const char *tempClassName = "TempGLWindowClass";
+
+    // Register temporary window class
+    WNDCLASSA wc = {};
+    wc.lpfnWndProc = DefWindowProcA;
+    wc.hInstance = hInstance;
+    wc.lpszClassName = tempClassName;
+    if (!RegisterClassA(&wc))
+    {
+        fprintf(stderr, "Failed to register temporary window class.\n");
+        exit(-1);
+    }
+
+    // Create a temporary hidden window
+    HWND tempHwnd = CreateWindowA(tempClassName, "Temp", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, hInstance, nullptr);
+    if (!tempHwnd)
+    {
+        fprintf(stderr, "Failed to create temporary window.\n");
+        exit(-1);
+    }
+
+    HDC tempDC = GetDC(tempHwnd);
+    if (!tempDC)
+    {
+        fprintf(stderr, "Failed to get temporary device context.\n");
+        exit(-1);
+    }
+
+    // Set a simple pixel format for the temporary context
+    PIXELFORMATDESCRIPTOR pfd = {};
+    pfd.nSize = sizeof(PIXELFORMATDESCRIPTOR);
+    pfd.nVersion = 1;
+    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+    pfd.iPixelType = PFD_TYPE_RGBA;
+    pfd.cColorBits = 24;
+    pfd.cDepthBits = 16;
+    pfd.iLayerType = PFD_MAIN_PLANE;
+
+    int pixelFormat = ChoosePixelFormat(tempDC, &pfd);
+    if (!SetPixelFormat(tempDC, pixelFormat, &pfd))
+    {
+        fprintf(stderr, "Failed to set temporary pixel format.\n");
+        exit(-1);
+    }
+
+    // Create temporary OpenGL context
+    HGLRC tempContext = wglCreateContext(tempDC);
+    if (!tempContext || !wglMakeCurrent(tempDC, tempContext))
+    {
+        fprintf(stderr, "Failed to initialize temporary OpenGL context.\n");
+        exit(-1);
+    }
+
+    // Load wglChoosePixelFormatARB
+    win_choose_pixel_format_arb = (PFNWGLCHOOSEPIXELFORMATARBPROC)wglGetProcAddress("wglChoosePixelFormatARB");
+
+    // Cleanup temporary resources
+    wglMakeCurrent(nullptr, nullptr);
+    wglDeleteContext(tempContext);
+    ReleaseDC(tempHwnd, tempDC);
+    DestroyWindow(tempHwnd);
+    UnregisterClassA(tempClassName, hInstance);
+}
+
+int ChooseMultisamplePixelFormat(HDC hdc, int samples)
+{
+    int pixelFormat = 0;
+    UINT numFormats = 0;
+
+    int attribs[] = {
+        WGL_DRAW_TO_WINDOW_ARB, GL_TRUE,
+        WGL_SUPPORT_OPENGL_ARB, GL_TRUE,
+        WGL_DOUBLE_BUFFER_ARB, GL_TRUE,
+        WGL_PIXEL_TYPE_ARB, WGL_TYPE_RGBA_ARB,
+        WGL_COLOR_BITS_ARB, 32,
+        WGL_DEPTH_BITS_ARB, 24,
+        WGL_STENCIL_BITS_ARB, 8,
+        WGL_SAMPLE_BUFFERS_ARB, 1, // Enable multisampling
+        WGL_SAMPLES_ARB, samples,  // Number of samples
+        0                          // End of attributes
+    };
+
+    if (win_choose_pixel_format_arb)
+    {
+        if (win_choose_pixel_format_arb(hdc, attribs, nullptr, 1, &pixelFormat, &numFormats))
+        {
+            if (numFormats > 0)
+            {
+                return pixelFormat;
+            }
+        }
+    }
+    return 0; // Fallback if multisampling is not available
+}
+
 static void SetupOpenGLContext()
 {
+    CreateTemporaryContext();
+
     g_hDC = GetDC(gl_hWnd);
     if (!g_hDC)
     {
         fprintf(stderr, "Failed to get device context.\n");
         exit(-1);
     }
+    // PIXELFORMATDESCRIPTOR pfd = {
+    //     sizeof(PIXELFORMATDESCRIPTOR),
+    //     1,
+    //     PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
+    //     PFD_TYPE_RGBA,
+    //     32,               // Color bits
+    //     0, 0, 0, 0, 0, 0, // Color bits shift, etc.
+    //     0, 0,             // No alpha buffer
+    //     0, 0, 0, 0, 0,    // Accumulation buffer
+    //     24,               // Depth bits (added)
+    //     8,                // Stencil bits (optional)
+    //     0,                // No auxiliary buffers
+    //     PFD_MAIN_PLANE,
+    //     0, 0, 0, 0};
 
-    PIXELFORMATDESCRIPTOR pfd;
-    memset(&pfd, 0, sizeof(pfd));
-    pfd.nSize = sizeof(pfd);
-    pfd.nVersion = 1;
-    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
-    pfd.iPixelType = PFD_TYPE_RGBA;
-    pfd.cColorBits = 32;
-    pfd.cDepthBits = 24;
-    pfd.iLayerType = PFD_MAIN_PLANE;
-    int pf = ChoosePixelFormat(g_hDC, &pfd);
-    if (pf == 0)
-    {
-        fprintf(stderr, "Failed to choose pixel format.\n");
-        exit(-1);
-    }
+    // PIXELFORMATDESCRIPTOR pfd;
+    // memset(&pfd, 0, sizeof(pfd));
+    // pfd.nSize = sizeof(pfd);
+    // pfd.nVersion = 1;
+    // pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+    // pfd.iPixelType = PFD_TYPE_RGBA;
+    // pfd.cColorBits = 32;
+    // pfd.cDepthBits = 24;
+    // pfd.iLayerType = PFD_MAIN_PLANE;
+    int pf = ChooseMultisamplePixelFormat(g_hDC, 4); // Try to get a multisample pixel format
+
+    PIXELFORMATDESCRIPTOR pfd = {};
+    DescribePixelFormat(g_hDC, pf, sizeof(PIXELFORMATDESCRIPTOR), &pfd);
     if (!SetPixelFormat(g_hDC, pf, &pfd))
     {
         fprintf(stderr, "Failed to set pixel format.\n");
+        DWORD error = GetLastError();
+        fprintf(stderr, "Error code: 0x%x\n", error);
         exit(-1);
     }
 
@@ -229,31 +395,52 @@ static void SetupOpenGLContext()
     gl_check_error("After GLEW init");
 }
 
-GLuint mvp_ubo;
-// Sets up the VAO and shader program used for drawing.
+// Add new global variables for lighting
+static ubo_light g_currentLight = {
+    {1.0f, 0.0f, 0.0f, 1.0f},
+    {0.2f, 0.0f, 0.2f, 1.0f},
+    {0.8f, 0.3f, 1.0f, 1.0f},
+    {1.0f, 1.0f, 1.0f, 1.0f}};
+
+static ubo_material g_currentMaterial = {
+    {0.1f, 0.1f, 0.1f, 1.0f},
+    {0.8f, 0.8f, 0.8f, 1.0f},
+    {1.0f, 1.0f, 1.0f, 1.0f},
+    128.0f};
+
+// static GLuint g_matrix_ubo = 0;
+static GLuint g_materialUBO = 0;
+static GLuint g_lightUBO = 0;
+
+static void set_light(vec3 ambient, vec3 diffuse, vec3 specular, vec3 position)
+{
+    g_currentLight.position = {position.x, position.y, position.z, 1.0f};
+    g_currentLight.ambient = {ambient.x, ambient.y, ambient.z, 1.0f};
+    g_currentLight.diffuse = {diffuse.x, diffuse.y, diffuse.z, 1.0f};
+    g_currentLight.specular = {specular.x, specular.y, specular.z, 1.0f};
+}
+
+// Update SetupGLObjects to handle the larger UBO
 static void SetupGLObjects()
 {
-    // Create and compile our shader program.
     g_shaderProgram = CreateShaderProgram();
     gl_check_error("After shader program creation");
 
-    glGenBuffers(1, &mvp_ubo);
-    glBindBuffer(GL_UNIFORM_BUFFER, mvp_ubo);
-    glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 16, nullptr, GL_DYNAMIC_DRAW);
+    // Create and bind the uniform buffer
+    glGenBuffers(1, &g_materialUBO);
+    glBindBuffer(GL_UNIFORM_BUFFER, g_materialUBO);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(ubo_material), NULL, GL_DYNAMIC_DRAW);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
-    // Get the uniform block index
+    // Create and bind the uniform buffer
+    glGenBuffers(1, &g_lightUBO);
+    glBindBuffer(GL_UNIFORM_BUFFER, g_lightUBO);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(ubo_light), NULL, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+    // Bind the uniform block
     GLuint blockIndex = glGetUniformBlockIndex(g_shaderProgram, "UniformBuffer");
-
-    // Ensure the block is bound to binding point 0
     glUniformBlockBinding(g_shaderProgram, blockIndex, 0);
-
-    // Create a Vertex Array Object to store vertex attribute configuration.
-    glGenVertexArrays(1, &g_VAO);
-    glBindVertexArray(g_VAO);
-    // We do not create a VBO here since it will be created when the mesh is set.
-    glBindVertexArray(0);
-    gl_check_error("After VAO creation");
 }
 
 // -----------------------------------------------------------------------------
@@ -276,121 +463,199 @@ int gl_render_init(void *windowHandle, int width, int height)
 
     // Set default OpenGL state.
     glViewport(0, 0, g_width, g_height);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearColor(0.5f, 0.4f, 0.3f, 1.0f);
+
+    glEnable(GL_FRAMEBUFFER_SRGB); // Enable sRGB framebuffer for color correction
+
+    // Enable depth testing
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS); // Standard depth comparison function
+
+    // Optional: Enable backface culling for better performance
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+
+    gl_check_error("After OpenGL initialization");
+
     return 0;
 }
 
-// gl_render_set_mesh: Uploads the provided mesh data to GPU memory by creating VBO (and EBO if needed)
-// and configuring the VAO for drawing.
-void gl_render_set_mesh(const Mesh *mesh)
+gl_mesh *gl_render_add_mesh(const Mesh *mesh)
 {
+    gl_mesh render_mesh = {};
+
     if (!mesh || !mesh->vertices || mesh->vertexCount == 0)
     {
         fprintf(stderr, "Invalid mesh data.\n");
-        return;
+        return nullptr;
     }
-    g_meshVertexCount = mesh->vertexCount;
-    g_meshIndexCount = mesh->indexCount; // 0 if not provided
+    render_mesh.meshVertexCount = mesh->vertexCount;
+    render_mesh.meshIndexCount = mesh->indexCount;
+    render_mesh.model_matrix = mat4_identity(); // Initialize model matrix to identity
 
-    // If a previous VBO exists, delete it.
-    if (g_VBO)
-    {
-        glDeleteBuffers(1, &g_VBO);
-        g_VBO = 0;
-    }
-    glGenBuffers(1, &g_VBO);
-    glBindBuffer(GL_ARRAY_BUFFER, g_VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 4 * mesh->vertexCount,
-                 mesh->vertices, GL_STATIC_DRAW);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    // Create and bind the uniform buffer
+    glGenBuffers(1, &render_mesh.matrix_ubo);
+    glBindBuffer(GL_UNIFORM_BUFFER, render_mesh.matrix_ubo);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(struct ubo_matrix), NULL, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
-    // If index data is provided, create an Element Buffer Object.
+    // Delete old buffers if they exist
+    if (render_mesh.VBO)
+        glDeleteBuffers(1, &render_mesh.VBO);
+    if (render_mesh.EBO)
+        glDeleteBuffers(1, &render_mesh.EBO);
+
+    // Create and fill VBO
+    glGenBuffers(1, &render_mesh.VBO);
+    glBindBuffer(GL_ARRAY_BUFFER, render_mesh.VBO);
+    glBufferData(GL_ARRAY_BUFFER, mesh->vertexCount * sizeof(vertex), mesh->vertices, GL_STATIC_DRAW);
+
+    // Create EBO if needed
     if (mesh->indices && mesh->indexCount > 0)
     {
-        if (g_EBO)
-        {
-            glDeleteBuffers(1, &g_EBO);
-            g_EBO = 0;
-        }
-        glGenBuffers(1, &g_EBO);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_EBO);
+        glGenBuffers(1, &render_mesh.EBO);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, render_mesh.EBO);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * mesh->indexCount,
                      mesh->indices, GL_STATIC_DRAW);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     }
 
-    // Configure the VAO: bind VBO, set vertex attribute pointers.
-    glBindVertexArray(g_VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, g_VBO);
-    // Enable and set the layout for position attribute at location 0.
+    // Create VAO
+    glGenVertexArrays(1, &render_mesh.VAO);
+    gl_check_error("After VAO creation");
+    // Configure VAO
+    glBindVertexArray(render_mesh.VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, render_mesh.VBO);
+
+    // Use proper stride and offsets
+    const GLsizei stride = sizeof(vertex);
+    // Position attribute (location = 0)
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(float) * 4, (void *)0);
-    // If using an EBO, bind it to the VAO.
-    if (g_EBO)
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, stride, (void *)0);
+    // Normal attribute (location = 1)
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, stride, (void *)(sizeof(vec4)));
+    // TexCoord attribute (location = 2)
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride, (void *)(sizeof(vec4) * 2));
+
+    if (render_mesh.EBO)
     {
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_EBO);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, render_mesh.EBO);
     }
+
     glBindVertexArray(0);
     gl_check_error("After setting mesh");
+    g_meshes.push_back(render_mesh); // Store the mesh in the global vector
+    return &g_meshes[g_meshes.size() - 1];
+}
+// Update gl_render_set_mvp to handle the full UBO
+void gl_render_set_mvp(const mat4 view, const mat4 projection, const camera cam)
+{
+    mat4 vp = mat4_mult(projection, view);
+    for (int i = 0; i < g_meshes.size(); i++)
+    {
+
+        ubo_matrix temp = {};
+        mat4 mvp = mat4_mult(g_meshes[i].model_matrix, vp);
+        gl_mesh *mesh = &g_meshes[i];
+        memcpy(temp.mvp.m, mvp.m, sizeof(mat4)); // 16 * sizeof(float));
+        memcpy(temp.view.m, view.m, sizeof(mat4));
+        memcpy(temp.model.m, mesh->model_matrix.m, sizeof(mat4));
+
+        memcpy(&temp.view_pos, &cam.position, sizeof(vec3));
+        temp.view_pos.w = 1.0f; // Set w component to 1.0f
+
+        glBindBuffer(GL_UNIFORM_BUFFER, mesh->matrix_ubo);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(temp), &temp);
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    }
 }
 
-// gl_render_set_mvp: Updates the shader uniform for the Model-View-Projection matrix.
-void gl_render_set_mvp(mat4 mvp)
+// Add new functions for lighting control
+void gl_render_set_light(const ubo_light *light)
 {
-
-    glBindBuffer(GL_UNIFORM_BUFFER, mvp_ubo);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(float) * 16, mvp.m);
-    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    if (light)
+    {
+        memcpy(&g_currentLight, light, sizeof(ubo_light));
+    }
 }
 
-// gl_render_draw: Clears the screen, binds the shader program and VAO, issues the draw call,
-// and swaps the front and back buffers.
-void gl_render_draw(void)
+void gl_render_set_material(const ubo_material *material)
 {
-    glViewport(0, 0, g_width, g_height);
+    if (material)
+    {
+        memcpy(&g_currentMaterial, material, sizeof(ubo_material));
+    }
+}
+
+// Update gl_render_draw to set lighting uniforms
+void gl_render_draw(u32 width, u32 height)
+{
+    glViewport(0, 0, width, height);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    // glEnable(GL_DEPTH_TEST);
 
     glUseProgram(g_shaderProgram);
-    glBindBufferBase(GL_UNIFORM_BUFFER, 0, mvp_ubo);
 
-    glBindVertexArray(g_VAO);
-    // Draw using indices if available; otherwise, use the vertex count.
-    // glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // Wireframe mode for debugging
-
-    if (g_EBO && g_meshIndexCount > 0)
-    {
-        glDrawElements(GL_TRIANGLES, g_meshIndexCount, GL_UNSIGNED_INT, 0);
-    }
-    else
+    for (int i = 0; i < g_meshes.size(); i++)
     {
 
-        glDrawArrays(GL_TRIANGLES, 0, g_meshVertexCount);
+        gl_mesh *mesh = &g_meshes[i];
+
+        // Bind the UBO
+        glBindBufferBase(GL_UNIFORM_BUFFER, 0, mesh->matrix_ubo);
+
+        // Bind Material UBO
+        glBindBufferBase(GL_UNIFORM_BUFFER, 1, g_materialUBO);
+        glBindBuffer(GL_UNIFORM_BUFFER, g_materialUBO);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(ubo_material), &g_currentMaterial);
+        glBindBuffer(GL_UNIFORM_BUFFER, 0); // Unbind for safety
+
+        // Bind Light UBO
+        glBindBuffer(GL_UNIFORM_BUFFER, g_lightUBO);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(ubo_light), &g_currentLight);
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 2, g_lightUBO);
+
+        glBindVertexArray(mesh->VAO);
+        if (mesh->EBO && mesh->meshIndexCount > 0)
+        {
+            glDrawElements(GL_TRIANGLES, mesh->meshIndexCount, GL_UNSIGNED_INT, 0);
+        }
+        else
+        {
+            glDrawArrays(GL_TRIANGLES, 0, mesh->meshVertexCount);
+        }
+        glBindVertexArray(0);
     }
-    glBindVertexArray(0);
+
     glUseProgram(0);
-    gl_check_error("After drawing");
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-    // Swap the buffers to display the rendered image.
     SwapBuffers(g_hDC);
 }
 
 // gl_render_cleanup: Deletes all OpenGL objects and destroys the OpenGL context.
 void gl_render_cleanup(void)
 {
-    if (g_EBO)
+    for (int i = 0; i < g_meshes.size(); i++)
     {
-        glDeleteBuffers(1, &g_EBO);
-        g_EBO = 0;
-    }
-    if (g_VBO)
-    {
-        glDeleteBuffers(1, &g_VBO);
-        g_VBO = 0;
-    }
-    if (g_VAO)
-    {
-        glDeleteVertexArrays(1, &g_VAO);
-        g_VAO = 0;
+        gl_mesh *mesh = &g_meshes[i];
+        if (mesh->EBO)
+        {
+            glDeleteBuffers(1, &mesh->EBO);
+            mesh->EBO = 0;
+        }
+        if (mesh->VBO)
+        {
+            glDeleteBuffers(1, &mesh->VBO);
+            mesh->VBO = 0;
+        }
+        if (mesh->VAO)
+        {
+            glDeleteVertexArrays(1, &mesh->VAO);
+            mesh->VAO = 0;
+        }
     }
     if (g_shaderProgram)
     {

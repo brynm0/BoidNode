@@ -9,46 +9,50 @@ layout(location = 0) out vec4 outColor;
 
 // Material properties
 struct Material {
-  vec3 ambient;
-  vec3 diffuse;
-  vec3 specular;
+  vec4 ambient;
+  vec4 diffuse;
+  vec4 specular;
   float shininess;
 };
 
 // Light properties
 struct Light {
-  vec3 position;
-  vec3 ambient;
-  vec3 diffuse;
-  vec3 specular;
+  vec4 position;
+  vec4 ambient;
+  vec4 diffuse;
+  vec4 specular;
 };
 
 // Wrap Material and Light in uniform blocks
-layout(std140, binding = 0) uniform MaterialBlock { Material material; };
+layout(std140, binding = 1) uniform MaterialBlock { Material material; };
 
-layout(std140, binding = 1) uniform LightBlock { Light light; };
+layout(std140, binding = 2) uniform LightBlock { Light light; };
 
 void main() {
   // Normalize the interpolated normal and view direction
+  // outColor = vec4(1, 0, 1, 1.0); // Placeholder for color output
+
   vec3 norm = normalize(Normal);
   vec3 viewDir = normalize(ViewDir);
 
   // Calculate light direction (from fragment to light)
-  vec3 lightDir = normalize(light.position - FragPos);
+  vec3 lightDir = normalize(light.position.xyz - FragPos);
 
   // Ambient component
-  vec3 ambient = light.ambient * material.ambient;
+  vec3 ambient = light.ambient.xyz * material.ambient.xyz;
 
   // Diffuse component
-  float diff = max(dot(norm, lightDir), 0.0);
-  vec3 diffuse = light.diffuse * (diff * material.diffuse);
+  float diff = max(dot(norm, lightDir.xyz), 0.0);
+  vec3 diffuse = light.diffuse.xyz * (diff * material.diffuse.xyz);
 
   // Blinn-Phong specular component
   vec3 halfwayDir = normalize(lightDir + viewDir);
   float spec = pow(max(dot(norm, halfwayDir), 0.0), material.shininess);
-  vec3 specular = light.specular * (spec * material.specular);
+  vec3 specular = light.specular.xyz * (spec * material.specular.xyz);
 
   // Combine all components
   vec3 result = ambient + diffuse + specular;
-  outColor = vec4(result, 1.0);
+  float gamma = 2.2;
+  result.rgb = pow(result.rgb, vec3(1.0 / gamma));
+  outColor = vec4(result, 1.0); // vec4(result, 1.0);
 }
