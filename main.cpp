@@ -113,7 +113,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     gl_render_init(g_hWnd, g_win_width, g_win_height);
     imgui_init(g_hWnd);
 
-    graph_context_data *graph_context = init_im_nodes();
+    graph_context graph_context = init_im_nodes();
 
     // uint32_t bunny_id = vk_render_create_mesh(&bunny);
     MSG msg;
@@ -122,8 +122,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     window_rectangle win_rect = get_window_rectangle(g_hWnd);
     mat4 projection_matrix = perspective_matrix(win_rect.width, win_rect.height, 60.0f, 0.1f, 100.0f);
 
-    register_new_mesh_node(&bunny, "Bunny Mesh");
-    register_new_vec3_node();
+    // register_new_mesh_node(&bunny, "Bunny Mesh");
+    init_mesh_node(&graph_context, &bunny, "Bunny Mesh");
+    // register_new_vec3_node();
+    init_vec3_node(&graph_context, {0, 0, 0});
 
     while (!quit)
     {
@@ -140,10 +142,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         // Process New Links
         // ----------------------------------------------------------------------------
         // Check if the user created a new link in the node editor.
-        process_and_store_new_link();
-        update_links();
+        process_and_store_new_links(&graph_context);
+        update_links(&graph_context); // Update existing links
 
-        imgui_render(graph_context);
+        imgui_render(&graph_context);
 
         // vk_render_mesh(bunny_id);
         win_rect = get_window_rectangle(g_hWnd);

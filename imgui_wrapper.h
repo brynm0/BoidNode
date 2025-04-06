@@ -60,7 +60,7 @@ static void basic_ui()
     ImGui::End();
 }
 
-static void imgui_render(graph_context_data *context_data)
+static void imgui_render(graph_context *context_data)
 {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplWin32_NewFrame();
@@ -70,7 +70,7 @@ static void imgui_render(graph_context_data *context_data)
     basic_ui();
     // Right-click: context menu
 
-    draw_node_editor(context_data->mesh_nodes, context_data->vec3_nodes, context_data->links); // Draw the node editor
+    draw_node_editor(context_data); // Draw the node editor
 
     ImGui::Render();
 }
