@@ -95,12 +95,57 @@ window_rectangle get_window_rectangle(HWND hwnd)
     return win_rect;
 }
 
+static inline void draw_axes(f32 line_weight)
+{
+
+    // Draw X axis in red
+    draw_line_ex(line_weight,
+                 vec3(0, 0, 0),
+                 vec3(1, 0, 0),
+                 vec3(1, 0, 0),
+                 GL_ALWAYS);
+
+    // Draw Y axis in green
+    draw_line_ex(line_weight,
+                 vec3(0, 0, 0),
+                 vec3(0, 1, 0),
+                 vec3(0, 1, 0),
+                 GL_ALWAYS);
+
+    // Draw Z axis in blue
+    draw_line_ex(line_weight,
+                 vec3(0, 0, 0),
+                 vec3(0, 0, 1),
+                 vec3(0, 0, 1),
+                 GL_ALWAYS);
+}
+
+static inline void draw_grid(f32 line_weight)
+{
+    float extents = .5f;
+    float spacing = 0.1f;
+    vec3 color = vec3(0.5f, 0.5f, 0.5f);
+    for (f32 i = -extents; i <= extents; i += spacing)
+    {
+        // Draw grid lines in XZ plane
+        draw_line(line_weight,
+                  vec3(-extents, 0, i),
+                  vec3(extents, 0, i),
+                  color);
+        draw_line(line_weight,
+                  vec3(i, 0, -extents),
+                  vec3(i, 0, extents),
+                  color);
+        // printf("Drawing grid line at %f\n", i);
+    }
+}
+
 // WinMain entry point.
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
 
     camera cam = {};
-    cam.position = {1, 0, 0};
+    cam.position = {1, 1, 1};
     cam.target = {0.0f, 0.0f, 0.0f};
     cam.up = {0, 1, 0};
 
@@ -112,6 +157,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     InitWindow(hInstance, nCmdShow);
     gl_render_init(g_hWnd, g_win_width, g_win_height);
     imgui_init(g_hWnd);
+    gl_line_render_init(10000);
 
     graph_context graph_context = init_im_nodes();
 
@@ -138,10 +184,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             process_camera_input(&cam, g_hWnd, msg.message, msg.wParam, msg.lParam);
         }
 
-        // ----------------------------------------------------------------------------
-        // Process New Links
-        // ----------------------------------------------------------------------------
-        // Check if the user created a new link in the node editor.
+        draw_axes(.5f);
+        draw_grid(.5f);
         process_and_store_new_links(&graph_context);
         update_links(&graph_context); // Update existing links
 

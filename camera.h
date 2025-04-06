@@ -41,7 +41,7 @@ vec3 get_camera_right_vec(camera *cam)
         return (vec3){0.0f, 0.0f, 0.0f}; // Return zero vector if camera is null
 
     // Compute the forward vector (from camera position to target)
-    vec3 forward = vector_subtract(cam->target, cam->position);
+    vec3 forward = cam->target - cam->position;
     forward = vector_normalize(forward);
 
     // Compute the right vector (perpendicular to forward and up)
@@ -89,10 +89,10 @@ static void update_camera_position(camera *cam)
     offset = vector_rotate(offset, WORLD_UP, cam->yaw);
 
     // 4. Set the final camera position (target + rotated offset)
-    cam->position = vector_add(cam->target, offset);
+    cam->position = cam->target + offset;
 
     // 5. Compute the new forward vector (camera to target)
-    vec3 forward = vector_normalize(vector_subtract(cam->target, cam->position));
+    vec3 forward = vector_normalize(cam->target - cam->position);
 
     // 6. Recompute the right vector (perpendicular to forward and WORLD_UP)
     vec3 right = vector_cross(forward, WORLD_UP);
@@ -194,7 +194,7 @@ void process_camera_input(camera *cam, HWND hwnd, UINT msg, WPARAM w_param, LPAR
             {
                 // Panning: Move the camera's position and target parallel to the view plane.
                 // Compute the forward vector (view direction).
-                vec3 forward = vector_subtract(cam->target, cam->position);
+                vec3 forward = cam->target - cam->position;
                 forward = vector_normalize(forward);
 
                 // Compute the right vector in the view plane using the world up.
@@ -288,8 +288,7 @@ mat4 view_matrix_from_cam(const camera *cam)
         return mat4_identity();
 
     // Compute the forward vector (from camera to target)
-    vec3 forward = vector_normalize(vector_subtract(cam->target, cam->position));
-
+    vec3 forward = vector_normalize(cam->target - cam->position);
     // Compute the right vector (must use cam->up to ensure stability)
     vec3 right = vector_normalize(vector_cross(forward, cam->up));
 

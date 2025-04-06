@@ -10,41 +10,70 @@
 // Include your mesh type declaration
 #include "io.h"
 #include "types.h"
+#include <cassert>
 
 /*------------------------------ Core Types ------------------------------*/
-typedef enum NodeType
-{
-    NODE_TYPE_MESH,
-    NODE_TYPE_VEC3,
-    NODE_TYPE_CUSTOM // Add new types here
-} NodeType;
+// typedef enum NodeType
+// {
+//     NODE_TYPE_MESH,
+//     NODE_TYPE_VEC3,
+//     NODE_TYPE_CUSTOM // Add new types here
+// } NodeType;
 
-typedef enum AttrType
+enum component_type
 {
-    ATTR_TYPE_MESH,
-    ATTR_TYPE_VEC3,
-    ATTR_TYPE_FLOAT,
-    ATTR_TYPE_CUSTOM
-} AttrType;
+    COMPONENT_TYPE_TRANSFORM = 1 << 0,
+    COMPONENT_TYPE_MESH = 1 << 1,
+    COMPONENT_TYPE_VEC3 = 1 << 2,
+};
 
 typedef struct Attribute
 {
-    int id;           // Unique attribute ID
-    AttrType type;    // Data type
-    void *data;       // Pointer to associated data
-    size_t data_size; // Size of data buffer
-    bool is_input;    // Input/output designation
+    int id;              // Unique attribute ID
+    component_type type; // Data type
+    // void *data;          // Pointer to associated data
+    // size_t data_size;    // Size of data buffer
+    bool is_input; // Input/output designation
+    u32 owner_id;
 } Attribute;
 
-typedef struct GenericNode
+struct transform_component
 {
-    int id;                         // Unique node ID
-    NodeType type;                  // Node type identifier
-    char name[32];                  // Display name
-    std::vector<int> attribute_ids; // I/O attributes
-    void *node_data;                // Type-specific data
-    ImVec2 position;                // Node position
-} GenericNode;
+    vec3 position;
+    vec3 rotation;
+    vec3 scale;
+};
+
+struct MeshComponent
+{
+    Mesh *mesh;
+    gl_mesh *render_data;
+};
+
+struct Vec3Component
+{
+    vec3 value;
+};
+
+#define MAX_NUM_NODES 64
+transform_component transform_data[MAX_NUM_NODES];
+MeshComponent mesh_data[MAX_NUM_NODES];
+Vec3Component vec3_data[MAX_NUM_NODES];
+
+typedef struct node_entity
+{
+    int id; // Unique node ID
+    u64 components;
+    u64 ins;
+    u64 outs;
+    u64 editables;
+
+    std::vector<int> attributes;
+    // NodeType type;                  // Node type identifier
+    char name[32]; // Display name
+    // std::vector<int> attribute_ids; // I/O attributes
+    // void *node_data;                // Type-specific data
+} node_entity;
 
 typedef struct NodeLink
 {
@@ -56,9 +85,10 @@ typedef struct NodeLink
 /*------------------------------ Context Data ------------------------------*/
 typedef struct graph_context
 {
-    std::vector<GenericNode> nodes;
+    std::vector<node_entity> nodes;
     std::vector<NodeLink> links;
-    std::unordered_map<int, Attribute> attr_lookup; // Fast attribute access
+    std::vector<Attribute> attributes; // All attributes
+
     u32 next_node_id = 0;
     u32 next_attr_id = 0;
     u32 next_link_id = 0;
@@ -66,85 +96,150 @@ typedef struct graph_context
 
 /*------------------------------ Core Functions ------------------------------*/
 // Initialize new attribute and add to lookup
-int create_attribute(graph_context *ctx, AttrType type, void *data, size_t size, bool is_input)
+int create_attribute(graph_context *ctx, component_type type, bool is_input, u32 owner_id)
 {
     Attribute attr;
     attr.id = ctx->next_attr_id++;
     attr.type = type;
-    attr.data = data;
-    attr.data_size = size;
     attr.is_input = is_input;
-
-    ctx->attr_lookup[attr.id] = attr;
+    attr.owner_id = owner_id;
+    ctx->attributes.push_back(attr);
     return attr.id; // &ctx->attr_lookup[attr.id];
 }
 
-// Generic node creation template
-GenericNode *create_node(graph_context *ctx, NodeType type, const char *name, void *node_data)
+u32 init_node(graph_context *ctx, u64 components, const char *name, u64 in, u64 out, u64 editables)
 {
-    GenericNode node;
-    node.id = ctx->next_node_id++;
-    node.type = type;
-    node.node_data = node_data;
-    strncpy(node.name, name, sizeof(node.name));
+    assert(ctx->next_node_id < MAX_NUM_NODES);
+    node_entity ent = {};
+    ent.components = components;
+    ent.ins = in;
+    ent.outs = out;
+    ent.editables = editables;
+    ent.id = ctx->next_node_id++;
+    strncpy(ent.name, name, sizeof(ent.name));
 
-    ctx->nodes.push_back(node);
-    return &ctx->nodes.back();
+    if (components & COMPONENT_TYPE_TRANSFORM)
+    {
+        if (in & COMPONENT_TYPE_TRANSFORM)
+        {
+            int attr_id = create_attribute(ctx, COMPONENT_TYPE_TRANSFORM, true, ent.id);
+            ent.attributes.push_back(attr_id);
+        }
+        if (out & COMPONENT_TYPE_TRANSFORM)
+        {
+            int attr_id = create_attribute(ctx, COMPONENT_TYPE_TRANSFORM, false, ent.id);
+            ent.attributes.push_back(attr_id);
+        }
+        transform_data[ent.id].position = {0, 0, 0};
+        transform_data[ent.id].rotation = {0, 0, 0};
+        transform_data[ent.id].scale = {1, 1, 1};
+    }
+    if (components & COMPONENT_TYPE_MESH)
+    {
+        if (in & COMPONENT_TYPE_MESH)
+        {
+            int attr_id = create_attribute(ctx, COMPONENT_TYPE_MESH, true, ent.id);
+            ent.attributes.push_back(attr_id);
+        }
+        if (out & COMPONENT_TYPE_MESH)
+        {
+            int attr_id = create_attribute(ctx, COMPONENT_TYPE_MESH, false, ent.id);
+            ent.attributes.push_back(attr_id);
+        }
+        mesh_data[ent.id].mesh = nullptr;
+        mesh_data[ent.id].render_data = nullptr;
+    }
+    if (components & COMPONENT_TYPE_VEC3)
+    {
+        if (in & COMPONENT_TYPE_VEC3)
+        {
+            int attr_id = create_attribute(ctx, COMPONENT_TYPE_VEC3, true, ent.id);
+            ent.attributes.push_back(attr_id);
+        }
+        if (out & COMPONENT_TYPE_VEC3)
+        {
+            int attr_id = create_attribute(ctx, COMPONENT_TYPE_VEC3, false, ent.id);
+            ent.attributes.push_back(attr_id);
+        }
+        vec3_data[ent.id].value = {0, 0, 0};
+    }
+    ctx->nodes.push_back(ent);
+    return ent.id;
 }
 
 /*------------------------------ Type-Specific Initializers ------------------------------*/
 // Vec3 node initialization
-GenericNode *init_vec3_node(graph_context *ctx, vec3 initial_pos)
+u32 init_vec3_node(graph_context *ctx, vec3 initial_pos)
 {
-    GenericNode *node = create_node(ctx, NODE_TYPE_VEC3, "Vec3 Node", nullptr);
-    // Allocate memory for node-specific data
-    vec3 *data = (vec3 *)malloc(sizeof(vec3));
-    *data = initial_pos;
-
-    node->node_data = data;
-
-    // Create output attribute
-    int out_attr = create_attribute(ctx, ATTR_TYPE_VEC3, data, sizeof(vec3), false);
-    node->attribute_ids.push_back(out_attr);
+    u64 components = COMPONENT_TYPE_VEC3;
+    u64 ins = 0;
+    u64 outs = COMPONENT_TYPE_VEC3;
+    u64 editables = COMPONENT_TYPE_VEC3;
+    u32 node = init_node(ctx, components, "Vec3 Node", ins, outs, editables);
+    vec3_data[node].value = initial_pos;
     return node;
 }
 
-struct mesh_node_data
-{
-    Mesh *mesh;
-    gl_mesh *render_data;
-    v4 position;
-    v4 rotation;
-    v4 scale;
-};
-
 // Mesh node initialization
-void init_mesh_node(graph_context *ctx, Mesh *mesh, const char *name)
+u32 init_mesh_node(graph_context *ctx, Mesh *mesh, const char *name)
 {
-    GenericNode *node = create_node(ctx, NODE_TYPE_MESH, name, nullptr);
-    node->node_data = (mesh_node_data *)malloc(sizeof(mesh_node_data));
+    u64 components = COMPONENT_TYPE_MESH | COMPONENT_TYPE_TRANSFORM;
+    u64 ins = COMPONENT_TYPE_TRANSFORM;
+    u64 outs = COMPONENT_TYPE_MESH;
 
-    mesh_node_data *data = (mesh_node_data *)node->node_data;
+    u32 node = init_node(ctx, components, name, ins, outs, components);
+
     if (mesh)
     {
-        data->render_data = gl_render_add_mesh(mesh);
+        mesh_data[node].mesh = mesh;
+        mesh_data[node].render_data = gl_render_add_mesh(mesh);
     }
+    return node;
+}
 
-    // Create input attribute
-    int in_attr = create_attribute(ctx, ATTR_TYPE_VEC3, &data->position, sizeof(data->position), true);
-    int out_attr = create_attribute(ctx, ATTR_TYPE_MESH, &data->mesh, sizeof(data->mesh), false);
-    node->attribute_ids.push_back(in_attr);
-    node->attribute_ids.push_back(out_attr);
+void copy_attrib_data(Attribute *dst, Attribute *src)
+{
+
+    // Initial data transfer
+    if (src->type & COMPONENT_TYPE_TRANSFORM)
+    {
+        memcpy(&transform_data[dst->owner_id], &transform_data[src->owner_id], sizeof(transform_component));
+    }
+    if (src->type & COMPONENT_TYPE_MESH)
+    {
+        memcpy(&mesh_data[dst->owner_id], &mesh_data[src->owner_id], sizeof(MeshComponent));
+    }
+    if ((src->type & COMPONENT_TYPE_VEC3) && (dst->type & COMPONENT_TYPE_TRANSFORM))
+    {
+        memcpy(&transform_data[dst->owner_id], &vec3_data[src->owner_id], sizeof(vec3_data[src->owner_id]));
+    }
+    else if (src->type & COMPONENT_TYPE_VEC3)
+    {
+        memcpy(&vec3_data[dst->owner_id], &vec3_data[src->owner_id], sizeof(Vec3Component));
+    }
+}
+
+bool are_attribute_types_compatible(Attribute *src, Attribute *dst)
+{
+    if (src->type == dst->type)
+    {
+        return true;
+    }
+    else if ((src->type & COMPONENT_TYPE_VEC3) && (dst->type & COMPONENT_TYPE_TRANSFORM))
+    {
+        return true;
+    }
+    return false;
 }
 
 /*------------------------------ Link Handling ------------------------------*/
 bool create_link(graph_context *ctx, int output_attr, int input_attr)
 {
-    Attribute *dst = &ctx->attr_lookup[input_attr];
-    Attribute *src = &ctx->attr_lookup[output_attr];
+    Attribute *dst = &ctx->attributes[input_attr];
+    Attribute *src = &ctx->attributes[output_attr];
 
     // Type compatibility check
-    if (!src || !dst || src->type != dst->type || src->is_input || !dst->is_input)
+    if (!src || !dst || src->is_input || !dst->is_input || !are_attribute_types_compatible(src, dst))
     {
         // Error: Invalid connection
         return false;
@@ -157,8 +252,8 @@ bool create_link(graph_context *ctx, int output_attr, int input_attr)
     link.end_attr_id = input_attr;
     ctx->links.push_back(link);
 
-    // Initial data transfer
-    memcpy(dst->data, src->data, src->data_size);
+    copy_attrib_data(dst, src);
+
     return true;
 }
 
@@ -167,26 +262,14 @@ void update_links(graph_context *ctx)
 {
     for (auto &link : ctx->links)
     {
-        Attribute *src = &ctx->attr_lookup[link.start_attr_id];
-        Attribute *dst = &ctx->attr_lookup[link.end_attr_id];
+        Attribute *src = &ctx->attributes[link.start_attr_id];
+        Attribute *dst = &ctx->attributes[link.end_attr_id];
 
         if (src && dst)
         {
-            memcpy(dst->data, src->data, src->data_size);
+            copy_attrib_data(dst, src);
         }
     }
-}
-
-/*------------------------------ Helper Functions ------------------------------*/
-// Example implementation of get_node_by_id
-GenericNode *get_node_by_id(graph_context *ctx, int node_id)
-{
-    for (auto &node : ctx->nodes)
-    {
-        if (node.id == node_id)
-            return &node;
-    }
-    return nullptr;
 }
 
 /*------------------------------ Link Processing ------------------------------*/
@@ -194,30 +277,22 @@ GenericNode *get_node_by_id(graph_context *ctx, int node_id)
 inline void process_and_store_new_links(graph_context *ctx)
 {
     // First update existing connections
-    update_links(ctx);
+    // update_links(ctx);
 
     // Then process new links
-    int start_node_id, start_attr_id, end_node_id, end_attr_id;
+    int start_node_id = -1, start_attr_id = -1, end_node_id = -1, end_attr_id = -1;
     if (ImNodes::IsLinkCreated(
             &start_node_id,
             &start_attr_id,
             &end_node_id,
             &end_attr_id))
     {
-        // Get actual attribute IDs from node/attribute indices
-        GenericNode *start_node = get_node_by_id(ctx, start_node_id);
-        GenericNode *end_node = get_node_by_id(ctx, end_node_id);
-
-        if (!start_node || !end_node)
-        {
-            fprintf(stderr, "Invalid node connection attempt");
-        }
 
         // Attempt to create validated link
         if (!create_link(ctx, start_attr_id, end_attr_id))
         {
 
-            fprintf(stderr, "Failed to create link between attributes %d and %d",
+            fprintf(stderr, "Failed to create link between attributes %d and %d\n\n",
                     start_attr_id, end_attr_id);
         }
     }
@@ -233,7 +308,7 @@ graph_context init_im_nodes()
     graph_context ctx = {}; // Initialize context data
     ctx.nodes.reserve(20);
     ctx.links.reserve(20);
-    ctx.attr_lookup.reserve(50);
+    ctx.attributes.reserve(50);
 
     // Reset ID counters
     ctx.next_node_id = 0;
@@ -251,15 +326,18 @@ struct nodes_to_create
 };
 
 /*------------------------------ Context Menu ------------------------------*/
-struct NodeCreationRequest
+struct node_creation_request
 {
-    NodeType type;
+    u64 components;
+    u64 ins;
+    u64 outs;
+    u64 editables;
     ImVec2 position;
 };
 
-NodeCreationRequest ShowCanvasContextMenu()
+node_creation_request show_canvas_context_menu()
 {
-    NodeCreationRequest request = {NODE_TYPE_CUSTOM, ImVec2(0, 0)};
+    node_creation_request request = {};
 
     if (ImNodes::IsEditorHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
     {
@@ -269,15 +347,29 @@ NodeCreationRequest ShowCanvasContextMenu()
 
     if (ImGui::BeginPopup("CanvasContextMenu"))
     {
+
+        if (ImGui::MenuItem("Mesh Node"))
         {
-            if (ImGui::MenuItem("Mesh Node"))
-                request.type = NODE_TYPE_MESH;
+            request.components = COMPONENT_TYPE_MESH | COMPONENT_TYPE_TRANSFORM;
+            request.ins = COMPONENT_TYPE_TRANSFORM;
+            // request.editables = COMPONENT_TYPE_TRANSFORM;
+            request.outs = 0;
             request.position = ImGui::GetMousePos();
         }
         if (ImGui::MenuItem("Vec3 Node"))
         {
-            request.type = NODE_TYPE_VEC3;
+            request.components = COMPONENT_TYPE_VEC3;
             request.position = ImGui::GetMousePos();
+            request.outs = COMPONENT_TYPE_VEC3;
+            request.ins = 0;
+            request.editables = COMPONENT_TYPE_VEC3;
+        }
+        if (ImGui::MenuItem("Transform Node"))
+        {
+            request.components = COMPONENT_TYPE_TRANSFORM;
+            request.position = ImGui::GetMousePos();
+            request.outs = COMPONENT_TYPE_TRANSFORM;
+            request.editables = COMPONENT_TYPE_TRANSFORM;
         }
         ImGui::EndPopup();
     }
@@ -285,22 +377,22 @@ NodeCreationRequest ShowCanvasContextMenu()
     return request;
 }
 
-mat4 get_model_matrix(vec3 position)
+int get_node_attr_id(graph_context *ctx, node_entity *node, component_type type, bool is_input)
 {
-    mat4 result;
-
-    // Initialize to identity matrix
-    memset(&result, 0, sizeof(mat4));
-    result.m[0] = {1.0f, 0.0f, 0.0f, 0.0f};
-    result.m[1] = {0.0f, 1.0f, 0.0f, 0.0f};
-    result.m[2] = {0.0f, 0.0f, 1.0f, 0.0f};
-    result.m[3] = {position.x, position.y, position.z, 1.0f};
-
-    return result;
+    for (int i = 0; i < node->attributes.size(); i++)
+    {
+        u32 attr_id = node->attributes[i];
+        Attribute *attr = &ctx->attributes[attr_id];
+        if (attr->type == type && attr->is_input == is_input)
+        {
+            return attr->id;
+        }
+    }
+    return -1; // Not found
 }
 
 /*------------------------------ Node Drawing ------------------------------*/
-void draw_generic_node(graph_context *ctx, GenericNode *node)
+void draw_generic_node(graph_context *ctx, node_entity *node)
 {
     ImNodes::BeginNode(node->id);
 
@@ -309,84 +401,76 @@ void draw_generic_node(graph_context *ctx, GenericNode *node)
     ImGui::TextUnformatted(node->name);
     ImNodes::EndNodeTitleBar();
 
-    // Draw attributes based on type
-    switch (node->type)
+    if (node->components & COMPONENT_TYPE_TRANSFORM)
     {
-    case NODE_TYPE_MESH:
-    {
-        mesh_node_data *data = static_cast<mesh_node_data *>(node->node_data);
-
-        // Input attributes
-        for (auto &attr_id : node->attribute_ids)
+        if (node->editables & COMPONENT_TYPE_TRANSFORM)
         {
-            Attribute *attr = &ctx->attr_lookup[attr_id];
-            if (attr->is_input)
-            {
-                ImNodes::BeginInputAttribute(attr->id);
-                ImGui::Text("Input");
-                ImNodes::EndInputAttribute();
-            }
-            else
-            {
-                ImNodes::BeginOutputAttribute(attr->id);
-                ImGui::Text("Output");
-                ImNodes::EndOutputAttribute();
-            }
+            // Transformation controls
+            ImGui::PushItemWidth(300.0f);
+            ImGui::InputFloat3("Location", &transform_data[node->id].position.x);
+            ImGui::InputFloat3("Rotation", &transform_data[node->id].rotation.x);
+            ImGui::InputFloat3("Scale", &transform_data[node->id].scale.x);
+            ImGui::PopItemWidth();
         }
-
-        vec3 pos = {data->position.x, data->position.y, data->position.z};
-        data->render_data->model_matrix = get_model_matrix(pos);
-
-        // Transformation controls
-        ImGui::PushItemWidth(100.0f);
-        ImGui::InputFloat3("Location", &data->position.x);
-        ImGui::InputFloat3("Rotation", &data->rotation.x);
-        ImGui::InputFloat3("Scale", &data->scale.x);
-        ImGui::PopItemWidth();
-
-        break;
-    }
-
-    case NODE_TYPE_VEC3:
-    {
-        vec3 *values = static_cast<vec3 *>(node->node_data);
-
-        for (int i = 0; i < node->attribute_ids.size(); i++)
+        if (node->ins & COMPONENT_TYPE_TRANSFORM)
         {
-            Attribute *attr = &ctx->attr_lookup[node->attribute_ids[i]];
-            if (attr->is_input)
-            {
-                ImNodes::BeginInputAttribute(attr->id);
-                ImGui::Text("Input");
-                ImNodes::EndInputAttribute();
-            }
-            else
-            {
-                ImNodes::BeginOutputAttribute(attr->id);
-                ImGui::Text("Output");
-                ImNodes::EndOutputAttribute();
-            }
+            int id = get_node_attr_id(ctx, node, COMPONENT_TYPE_TRANSFORM, true);
+            ImNodes::BeginInputAttribute(id);
+            ImGui::Text("Input Transform");
+            ImNodes::EndInputAttribute();
         }
+        if (node->outs & COMPONENT_TYPE_TRANSFORM)
+        {
 
-        // Output attribute first
-        // ImNodes::BeginOutputAttribute(node->attributes[0].id);
-        // ImGui::Text("Output");
-        // ImNodes::EndOutputAttribute();
-
-        // Value controls
-        ImGui::PushItemWidth(120.0f);
-        ImGui::InputFloat("X", &values->x);
-        ImGui::InputFloat("Y", &values->y);
-        ImGui::InputFloat("Z", &values->z);
-        ImGui::PopItemWidth();
-        break;
+            int id = get_node_attr_id(ctx, node, COMPONENT_TYPE_TRANSFORM, false);
+            ImNodes::BeginOutputAttribute(id);
+            ImGui::Text("Output Transform");
+            ImNodes::EndOutputAttribute();
+        }
     }
+    if (node->components & COMPONENT_TYPE_MESH)
+    {
+        if (node->ins & COMPONENT_TYPE_MESH)
+        {
 
-    default:
-        ImGui::Text("Unknown Node Type");
-        break;
+            int id = get_node_attr_id(ctx, node, COMPONENT_TYPE_MESH, true);
+            ImNodes::BeginInputAttribute(id);
+            ImGui::Text("Input Mesh");
+            ImNodes::EndInputAttribute();
+        }
+        if (node->outs & COMPONENT_TYPE_MESH)
+        {
+            int id = get_node_attr_id(ctx, node, COMPONENT_TYPE_MESH, false);
+            ImNodes::BeginOutputAttribute(id);
+            ImGui::Text("Output Mesh");
+            ImNodes::EndOutputAttribute();
+        }
+        assert((node->editables & COMPONENT_TYPE_MESH)); // Meshes can never be editable
     }
+    if (node->components & COMPONENT_TYPE_VEC3)
+    {
+        if (node->ins & COMPONENT_TYPE_VEC3)
+        {
 
+            int id = get_node_attr_id(ctx, node, COMPONENT_TYPE_VEC3, true);
+            ImNodes::BeginInputAttribute(id);
+            ImGui::Text("Input Vec3");
+            ImNodes::EndInputAttribute();
+        }
+        if (node->outs & COMPONENT_TYPE_VEC3)
+        {
+            int id = get_node_attr_id(ctx, node, COMPONENT_TYPE_VEC3, false);
+            ImNodes::BeginOutputAttribute(id);
+            ImGui::Text("Output Vec3");
+            ImNodes::EndOutputAttribute();
+        }
+        if (node->editables & COMPONENT_TYPE_VEC3)
+        {
+            ImGui::PushItemWidth(300.0f);
+            ImGui::InputFloat3("Vec3 Value", &vec3_data[node->id].value.x);
+            ImGui::PopItemWidth();
+        }
+    }
     ImNodes::EndNode();
 }
 
@@ -399,6 +483,18 @@ void draw_node_editor(graph_context *ctx)
     for (auto &node : ctx->nodes)
     {
         draw_generic_node(ctx, &node);
+
+        if ((node.components & COMPONENT_TYPE_MESH) && (node.components & COMPONENT_TYPE_TRANSFORM))
+        {
+            mesh_data[node.id].render_data->model_matrix =
+                get_model_matrix(transform_data[node.id].position,
+                                 transform_data[node.id].rotation,
+                                 transform_data[node.id].scale);
+        }
+        else if (node.components & COMPONENT_TYPE_MESH)
+        {
+            mesh_data[node.id].render_data->model_matrix = mat4_identity();
+        }
     }
 
     // Draw all links
@@ -408,7 +504,7 @@ void draw_node_editor(graph_context *ctx)
     }
 
     // Handle context menu
-    NodeCreationRequest request = ShowCanvasContextMenu();
+    node_creation_request request = show_canvas_context_menu();
 
     ImNodes::MiniMap(0.2f, ImNodesMiniMapLocation_TopLeft);
     ImNodes::EndNodeEditor();
@@ -420,30 +516,9 @@ void draw_node_editor(graph_context *ctx)
         ImNodes::EditorContextSetZoom(zoom, ImGui::GetMousePos());
     }
 
-    if (request.type != NODE_TYPE_CUSTOM)
+    if (request.components)
     {
-        // GenericNode *newNode = create_node(ctx, request.type, "", nullptr);
-        // newNode->position = request.position;
-
-        // Initialize type-specific data
-        switch (request.type)
-        {
-        case NODE_TYPE_MESH:
-        {
-            init_mesh_node(ctx, nullptr, "Mesh Node"); // Replace with actual mesh data
-            break;
-        }
-
-        case NODE_TYPE_VEC3:
-        {
-            GenericNode *new_node = init_vec3_node(ctx, {0.0f, 0.0f, 0.0f}); // Default position
-            ImNodes::SetNodeScreenSpacePos(new_node->id,
-
-                                           request.position);
-
-            break;
-        }
-        }
+        init_node(ctx, request.components, "New Node", request.ins, request.outs, request.editables);
     }
 }
 

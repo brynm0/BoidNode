@@ -4,3 +4,4 @@
 shaders/shader_compile.bat
 *.spv
 *.obj
+main.exe

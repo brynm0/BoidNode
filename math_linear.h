@@ -5,12 +5,48 @@
 struct vec4
 {
     float x, y, z, w;
+    vec4(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
+    vec4() : x(0), y(0), z(0), w(0) {}
 };
+
+//------------------------------------------------------------------------------
+// Definition of a simple vec3 struct for 3D vector operations.
+typedef struct vec3
+{
+    float x;
+    float y;
+    float z;
+    vec3 operator*(float scalar) const
+    {
+        return {x * scalar, y * scalar, z * scalar};
+    }
+
+    // Multiply float * vec3
+    friend vec3 operator*(float scalar, const vec3 &v)
+    {
+        return {v.x * scalar, v.y * scalar, v.z * scalar};
+    }
+
+    vec3 operator+(const vec3 &v) const
+    {
+        return {x + v.x, y + v.y, z + v.z};
+    }
+    vec3 operator-(const vec3 &v) const
+    {
+        return {x - v.x, y - v.y, z - v.z};
+    }
+    vec3(float x, float y, float z) : x(x), y(y), z(z) {}
+    vec3() : x(0), y(0), z(0) {}
+} vec3;
 
 struct vec2
 {
     float x, y;
 
+    vec2 operator+(const vec2 &v) const
+    {
+        return {x + v.x, y + v.y};
+    }
     // Multiply vec2 * float
     vec2 operator*(float scalar) const
     {
@@ -22,12 +58,39 @@ struct vec2
     {
         return {v.x * scalar, v.y * scalar};
     }
+
+    vec2 operator-(const vec2 &v) const
+    {
+        return {x - v.x, y - v.y};
+    }
+
+    vec2 operator/(float scalar) const
+    {
+        return {x / scalar, y / scalar};
+    }
+    vec2(float x, float y) : x(x), y(y) {}
+    vec2() : x(0), y(0) {}
 };
 
 struct mat4
 {
     vec4 m[4]; // 4x4 matrix stored in column-major order
 };
+
+mat4 mat4_identity()
+{
+    mat4 matrix = {};
+    float temp[16] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f};
+
+    memcpy(&matrix.m, temp, 16 * sizeof(float));
+
+    return matrix;
+
+}; // Identity matrix
 
 mat4 mat4_mult(const mat4 &a, const mat4 &b)
 {
@@ -44,41 +107,99 @@ mat4 mat4_mult(const mat4 &a, const mat4 &b)
     }
     return result;
 }
-// {
-//     vec4 mvp[4]; // 4x4 matrix in column-major order
-// };
 
-//------------------------------------------------------------------------------
-// Definition of a simple vec3 struct for 3D vector operations.
-typedef struct vec3
+// Build a scale matrix
+mat4 mat4_scale(vec3 s)
 {
-    float x;
-    float y;
-    float z;
-} vec3;
-
-//------------------------------------------------------------------------------
-// Utility function: Adds two vec3 vectors (a + b) and returns the result.
-static inline vec3 vector_add(const vec3 a, const vec3 b)
-{
-    vec3 result;
-    result.x = a.x + b.x;
-    result.y = a.y + b.y;
-    result.z = a.z + b.z;
-    return result;
+    mat4 out = mat4_identity();
+    out.m[0].x = s.x;
+    out.m[1].y = s.y;
+    out.m[2].z = s.z;
+    return out;
 }
 
-//------------------------------------------------------------------------------
-// Utility function: Subtracts two vec3 vectors (a - b) and returns the result.
-static inline vec3 vector_subtract(const vec3 a, const vec3 b)
+// Build a translation matrix
+mat4 mat4_translate(vec3 t)
 {
-    vec3 result;
-    result.x = a.x - b.x;
-    result.y = a.y - b.y;
-    result.z = a.z - b.z;
-    return result;
+    mat4 out = mat4_identity();
+    out.m[3].x = t.x;
+    out.m[3].y = t.y;
+    out.m[3].z = t.z;
+    return out;
 }
 
+// Build a rotation matrix around X axis
+mat4 mat4_rotate_x(float angle)
+{
+    mat4 out = mat4_identity();
+    float c = cosf(angle);
+    float s = sinf(angle);
+    out.m[1].y = c;
+    out.m[1].z = s;
+    out.m[2].y = -s;
+    out.m[2].z = c;
+    return out;
+}
+
+// Build a rotation matrix around Y axis
+mat4 mat4_rotate_y(float angle)
+{
+    mat4 out = mat4_identity();
+    float c = cosf(angle);
+    float s = sinf(angle);
+    out.m[0].x = c;
+    out.m[0].z = -s;
+    out.m[2].x = s;
+    out.m[2].z = c;
+    return out;
+}
+
+// Build a rotation matrix around Z axis
+mat4 mat4_rotate_z(float angle)
+{
+    mat4 out = mat4_identity();
+    float c = cosf(angle);
+    float s = sinf(angle);
+    out.m[0].x = c;
+    out.m[0].y = s;
+    out.m[1].x = -s;
+    out.m[1].y = c;
+    return out;
+}
+// Final model matrix builder
+mat4 get_model_matrix(vec3 position, vec3 rotation, vec3 scale)
+{
+    mat4 S = mat4_scale(scale);
+    mat4 Rx = mat4_rotate_x(rotation.x);
+    mat4 Ry = mat4_rotate_y(rotation.y);
+    mat4 Rz = mat4_rotate_z(rotation.z);
+    mat4 T = mat4_translate(position);
+
+    // Rotation order ZYX
+    mat4 R = mat4_mult(Rz, mat4_mult(Ry, Rx));
+
+    // M = T * R * S
+    return mat4_mult(T, mat4_mult(R, S));
+}
+
+static vec4 mat4_mult_vec4(const mat4 m, const vec4 v)
+{
+    vec4 result;
+
+    // Column 0 contributes x component
+    result.x = m.m[0].x * v.x + m.m[1].x * v.y + m.m[2].x * v.z + m.m[3].x * v.w;
+
+    // Column 1 contributes y component
+    result.y = m.m[0].y * v.x + m.m[1].y * v.y + m.m[2].y * v.z + m.m[3].y * v.w;
+
+    // Column 2 contributes z component
+    result.z = m.m[0].z * v.x + m.m[1].z * v.y + m.m[2].z * v.z + m.m[3].z * v.w;
+
+    // Column 3 contributes w component
+    result.w = m.m[0].w * v.x + m.m[1].w * v.y + m.m[2].w * v.z + m.m[3].w * v.w;
+
+    return result;
+}
 //------------------------------------------------------------------------------
 // Utility function: Normalizes a vec3 vector and returns the result.
 // If the vector length is zero, the function returns the original vector.
@@ -142,22 +263,6 @@ static inline vec3 vector_rotate(const vec3 v, const vec3 axis, float rad)
 
     return result;
 }
-
-mat4 mat4_identity()
-{
-    mat4 matrix = {};
-    float temp[16] = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        0.0f, 0.0f, 0.0f, 1.0f};
-
-    memcpy(&matrix.m, temp, 16 * sizeof(float));
-
-    return matrix;
-
-}; // Identity matrix
-
 mat4 perspective_matrix(float width, float height, float fov, float near_plane, float far_plane)
 {
     mat4 matrix = {};

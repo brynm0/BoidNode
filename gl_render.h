@@ -122,6 +122,32 @@ static void gl_check_error(const char *msg)
     }
 }
 
+// -----------------------------------------------------------------------------
+// Line Rendering Implementation
+// -----------------------------------------------------------------------------
+
+// Modified Line struct
+typedef struct
+{
+    vec3 start;
+    vec3 end;
+    vec3 color;
+    float thickness;
+    GLenum depth_func; // Added for depth testing control
+} Line;
+
+static struct
+{
+    GLuint vao;
+    GLuint vbo;
+    GLuint program;
+    int max_lines;
+    int count;
+    Line *lines;
+    vertex *vertices; // 4 vertices per line (using existing vertex struct)
+    mat4 view_proj;   // Current view-projection matrix
+} g_lines = {0};
+
 // ---------- Internal helper functions ----------
 
 // Compiles a shader of the given type from the provided source string.
@@ -447,6 +473,98 @@ static void SetupGLObjects()
 // Public API implementations
 // -----------------------------------------------------------------------------
 
+// Modified line vertex shader with depth support
+static const char *LINE_VERT_SHADER =
+    "#version 330 core\n"
+    "layout(location=0) in vec4 aPos;\n"
+    "layout(location=2) in vec4 aColor;\n"
+    "out vec4 vColor;\n"
+    "void main() {\n"
+    "    gl_Position = vec4(aPos.xyz / aPos.w, 1.0);\n" // Proper perspective divide
+    "    vColor = aColor;\n"
+    "}\n";
+
+// "#version 330 core\n"
+// "layout(location=0) in vec4 aPos;\n"
+// "layout(location=2) in vec4 aColor;\n"
+// "out vec4 vColor;\n"
+// "void main() {\n"
+// "    gl_Position = aPos;\n"
+// "    gl_Position.z = aPos.z;  // Preserve depth from world space\n"
+// "    vColor = aColor;\n"
+// "}\n";
+
+static const char *LINE_FRAG_SHADER =
+    "#version 330 core\n"
+    "in vec4 vColor;\n"
+    "out vec4 FragColor;\n"
+    "void main() {\n"
+    "    FragColor = vColor;\n"
+    "}\n";
+
+int gl_line_render_init(int max_lines)
+{
+    if (max_lines <= 0)
+    {
+        fprintf(stderr, "Line render: Invalid max lines\n");
+        return -1;
+    }
+
+    // Allocate CPU buffers
+    g_lines.max_lines = max_lines;
+    g_lines.lines = (Line *)malloc(sizeof(Line) * max_lines);
+    g_lines.vertices = (vertex *)malloc(sizeof(vertex) * max_lines * 4);
+
+    if (!g_lines.lines || !g_lines.vertices)
+    {
+        fprintf(stderr, "Line render: Memory allocation failed\n");
+        return -1;
+    }
+
+    // Create GL objects
+    glGenVertexArrays(1, &g_lines.vao);
+    glGenBuffers(1, &g_lines.vbo);
+
+    glBindVertexArray(g_lines.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, g_lines.vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertex) * max_lines * 6, NULL, GL_DYNAMIC_DRAW);
+
+    // Vertex attributes (using existing vertex struct layout)
+    // Position (vec4)
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(vertex), (void *)0);
+    // Color (using texcoord slot, vec4)
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(vertex),
+                          (void *)(sizeof(vec4) * 2));
+
+    // Compile shaders
+    GLuint vert = CompileShader(GL_VERTEX_SHADER, LINE_VERT_SHADER);
+    GLuint frag = CompileShader(GL_FRAGMENT_SHADER, LINE_FRAG_SHADER);
+
+    g_lines.program = glCreateProgram();
+    glAttachShader(g_lines.program, vert);
+    glAttachShader(g_lines.program, frag);
+    glLinkProgram(g_lines.program);
+
+    // Cleanup shaders
+    glDeleteShader(vert);
+    glDeleteShader(frag);
+
+    GLint linked;
+    glGetProgramiv(g_lines.program, GL_LINK_STATUS, &linked);
+    if (!linked)
+    {
+        GLchar log[1024];
+        glGetProgramInfoLog(g_lines.program, sizeof(log), NULL, log);
+        fprintf(stderr, "Line shader link error: %s\n", log);
+        return -1;
+    }
+
+    glBindVertexArray(0);
+    return 0;
+}
+
 // gl_render_init: Initializes the OpenGL renderer by creating an OpenGL context on the
 // provided Win32 window and setting up default shader and VAO objects.
 int gl_render_init(void *windowHandle, int width, int height)
@@ -463,7 +581,7 @@ int gl_render_init(void *windowHandle, int width, int height)
 
     // Set default OpenGL state.
     glViewport(0, 0, g_width, g_height);
-    glClearColor(0.5f, 0.4f, 0.3f, 1.0f);
+    glClearColor(0.3f, 0.3f, 0.3f, 1.0f);
 
     glEnable(GL_FRAMEBUFFER_SRGB); // Enable sRGB framebuffer for color correction
 
@@ -556,7 +674,7 @@ void gl_render_set_mvp(const mat4 view, const mat4 projection, const camera cam)
     {
 
         ubo_matrix temp = {};
-        mat4 mvp = mat4_mult(g_meshes[i].model_matrix, vp);
+        mat4 mvp = mat4_mult(vp, g_meshes[i].model_matrix);
         gl_mesh *mesh = &g_meshes[i];
         memcpy(temp.mvp.m, mvp.m, sizeof(mat4)); // 16 * sizeof(float));
         memcpy(temp.view.m, view.m, sizeof(mat4));
@@ -569,6 +687,7 @@ void gl_render_set_mvp(const mat4 view, const mat4 projection, const camera cam)
         glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(temp), &temp);
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
+    g_lines.view_proj = mat4_mult(projection, view);
 }
 
 // Add new functions for lighting control
@@ -586,6 +705,113 @@ void gl_render_set_material(const ubo_material *material)
     {
         memcpy(&g_currentMaterial, material, sizeof(ubo_material));
     }
+}
+
+// Extended version with depth function parameter
+void draw_line_ex(float thickness, vec3 start, vec3 end, vec3 color, GLenum depth_func)
+{
+    if (g_lines.count >= g_lines.max_lines)
+    {
+        fprintf(stderr, "Line render: Max lines exceeded\n");
+        return;
+    }
+
+    // Store line parameters
+    g_lines.lines[g_lines.count] = (Line){
+        .start = start,
+        .end = end,
+        .color = color,
+        .thickness = thickness,
+        .depth_func = depth_func};
+    g_lines.count++;
+}
+
+void draw_line(float thickness, vec3 start, vec3 end, vec3 color)
+{
+    draw_line_ex(thickness, start, end, color, GL_LESS);
+}
+
+static void generate_line_vertices()
+{
+    int v_idx = 0;
+    float fw = (float)g_width;
+    float fh = (float)g_height;
+
+    for (int i = 0; i < g_lines.count; i++)
+    {
+        Line line = g_lines.lines[i];
+
+        // Transform start and end points to clip space
+        vec4 clip_start = mat4_mult_vec4(g_lines.view_proj,
+                                         vec4(line.start.x, line.start.y, line.start.z, 1.0f));
+        vec4 clip_end = mat4_mult_vec4(g_lines.view_proj,
+                                       vec4(line.end.x, line.end.y, line.end.z, 1.0f));
+
+        // Perspective divide to get NDC coordinates
+        vec3 ndc_start = vec3(clip_start.x / clip_start.w,
+                              clip_start.y / clip_start.w,
+                              clip_start.z / clip_start.w);
+        vec3 ndc_end = vec3(clip_end.x / clip_end.w,
+                            clip_end.y / clip_end.w,
+                            clip_end.z / clip_end.w);
+
+        // Convert NDC to screen space coordinates
+        vec2 screen_start = vec2((ndc_start.x * 0.5f + 0.5f) * fw,
+                                 (ndc_start.y * 0.5f + 0.5f) * fh);
+        vec2 screen_end = vec2((ndc_end.x * 0.5f + 0.5f) * fw,
+                               (ndc_end.y * 0.5f + 0.5f) * fh);
+
+        // Compute the screen-space direction and perpendicular vector
+        vec2 screen_dir = screen_end - screen_start;
+        float len = sqrtf(screen_dir.x * screen_dir.x + screen_dir.y * screen_dir.y);
+        if (len < 0.0001f)
+            continue;
+        vec2 screen_perp = vec2(-screen_dir.y, screen_dir.x) / len;
+
+        // Apply the line thickness (in pixels) as an offset in screen space
+        vec2 offset = screen_perp * line.thickness;
+
+        // Compute four corner positions in screen space
+        vec2 s0 = screen_start + offset;
+        vec2 s1 = screen_start - offset;
+        vec2 s2 = screen_end + offset;
+        vec2 s3 = screen_end - offset;
+
+        // Convert these back to NDC space
+        vec2 ndc0 = vec2((s0.x / fw) * 2.0f - 1.0f, (s0.y / fh) * 2.0f - 1.0f);
+        vec2 ndc1 = vec2((s1.x / fw) * 2.0f - 1.0f, (s1.y / fh) * 2.0f - 1.0f);
+        vec2 ndc2 = vec2((s2.x / fw) * 2.0f - 1.0f, (s2.y / fh) * 2.0f - 1.0f);
+        vec2 ndc3 = vec2((s3.x / fw) * 2.0f - 1.0f, (s3.y / fh) * 2.0f - 1.0f);
+
+        // Reconstruct clip space positions using original depth and w values
+        vec4 clip0 = vec4(ndc0.x * clip_start.w, ndc0.y * clip_start.w, ndc_start.z * clip_start.w, clip_start.w);
+        vec4 clip1 = vec4(ndc1.x * clip_start.w, ndc1.y * clip_start.w, ndc_start.z * clip_start.w, clip_start.w);
+        vec4 clip2 = vec4(ndc2.x * clip_end.w, ndc2.y * clip_end.w, ndc_end.z * clip_end.w, clip_end.w);
+        vec4 clip3 = vec4(ndc3.x * clip_end.w, ndc3.y * clip_end.w, ndc_end.z * clip_end.w, clip_end.w);
+
+        // Build two triangles for the line quad
+        // Triangle 1: clip0, clip1, clip2
+        // Triangle 2: clip1, clip3, clip2
+        vec4 quad[6] = {
+            clip0,
+            clip1,
+            clip2,
+            clip1,
+            clip3,
+            clip2};
+
+        // Store the vertices with the same color
+        vec4 color = vec4(line.color.x, line.color.y, line.color.z, 1.0f);
+        for (int j = 0; j < 6; j++)
+        {
+            g_lines.vertices[v_idx].position = quad[j];
+            g_lines.vertices[v_idx].texcoord = color;
+            v_idx++;
+        }
+    }
+
+    glBindBuffer(GL_ARRAY_BUFFER, g_lines.vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertex) * v_idx, g_lines.vertices);
 }
 
 // Update gl_render_draw to set lighting uniforms
@@ -630,6 +856,43 @@ void gl_render_draw(u32 width, u32 height)
     }
 
     glUseProgram(0);
+
+    // Draw lines
+    if (g_lines.count > 0)
+    {
+        generate_line_vertices();
+
+        glEnable(GL_DEPTH_TEST); // Enable depth testing for lines
+        glUseProgram(g_lines.program);
+        glBindVertexArray(g_lines.vao);
+
+        // Draw all lines in batches by depth function
+        GLenum current_depth_func = g_lines.lines[0].depth_func;
+        glDepthFunc(current_depth_func);
+        int batch_start = 0;
+
+        for (int i = 1; i <= g_lines.count; i++)
+        {
+            if (i == g_lines.count || g_lines.lines[i].depth_func != current_depth_func)
+            {
+                // Draw batch
+                glDrawArrays(GL_TRIANGLES, batch_start * 6, (i - batch_start) * 6);
+
+                if (i < g_lines.count)
+                {
+                    // Start new batch
+                    current_depth_func = g_lines.lines[i].depth_func;
+                    glDepthFunc(current_depth_func);
+                    batch_start = i;
+                }
+            }
+        }
+
+        glBindVertexArray(0);
+        glUseProgram(0);
+        g_lines.count = 0; // Reset for next frame
+    }
+
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
     SwapBuffers(g_hDC);
@@ -674,6 +937,22 @@ void gl_render_cleanup(void)
         ReleaseDC(gl_hWnd, g_hDC);
         g_hDC = 0;
     }
+
+    if (g_lines.vao)
+    {
+        glDeleteVertexArrays(1, &g_lines.vao);
+    }
+    if (g_lines.vbo)
+    {
+        glDeleteBuffers(1, &g_lines.vbo);
+    }
+    if (g_lines.program)
+    {
+        glDeleteProgram(g_lines.program);
+    }
+    free(g_lines.lines);
+    free(g_lines.vertices);
+    memset(&g_lines, 0, sizeof(g_lines));
 }
 
 // #endif // GL_RENDER_IMPLEMENTATION
