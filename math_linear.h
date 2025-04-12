@@ -2,6 +2,8 @@
 
 #include <math.h>
 
+#define PI(x) ((x) * 3.14159265358979323846f)
+
 struct vec4
 {
     float x, y, z, w;
@@ -200,75 +202,92 @@ static vec4 mat4_mult_vec4(const mat4 m, const vec4 v)
 
     return result;
 }
-//------------------------------------------------------------------------------
-// Utility function: Normalizes a vec3 vector and returns the result.
-// If the vector length is zero, the function returns the original vector.
-static inline vec3 vector_normalize(const vec3 v)
+
+namespace v3
 {
-    float len = (float)sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-    if (len == 0.0f)
-        return v; // Avoid division by zero
-    vec3 result;
-    result.x = v.x / len;
-    result.y = v.y / len;
-    result.z = v.z / len;
-    return result;
-}
+    static inline vec3 clamp(const vec3 v, float max_length)
+    {
+        float len = (float)sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        if (len > max_length)
+        {
+            vec3 result;
+            result.x = v.x / len * max_length;
+            result.y = v.y / len * max_length;
+            result.z = v.z / len * max_length;
+            return result;
+        }
+        return v; // No change needed
+    }
+    //------------------------------------------------------------------------------
+    // Utility function: Normalizes a vec3 vector and returns the result.
+    // If the vector length is zero, the function returns the original vector.
+    static inline vec3 normalize(const vec3 v)
+    {
+        float len = (float)sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        if (len == 0.0f)
+            return v; // Avoid division by zero
+        vec3 result;
+        result.x = v.x / len;
+        result.y = v.y / len;
+        result.z = v.z / len;
+        return result;
+    }
 
-//------------------------------------------------------------------------------
-// Utility function: Computes the cross product of two vec3 vectors (a x b)
-// and returns the result.
-static inline vec3 vector_cross(const vec3 a, const vec3 b)
-{
-    vec3 result;
-    result.x = a.y * b.z - a.z * b.y;
-    result.y = a.z * b.x - a.x * b.z;
-    result.z = a.x * b.y - a.y * b.x;
-    return result;
-}
+    //------------------------------------------------------------------------------
+    // Utility function: Computes the cross product of two vec3 vectors (a x b)
+    // and returns the result.
+    static inline vec3 cross(const vec3 a, const vec3 b)
+    {
+        vec3 result;
+        result.x = a.y * b.z - a.z * b.y;
+        result.y = a.z * b.x - a.x * b.z;
+        result.z = a.x * b.y - a.y * b.x;
+        return result;
+    }
+    //------------------------------------------------------------------------------
+    // Utility function: Computes the dot product of two vec3 vectors (a . b)
+    // and returns the result.
+    static inline float dot(const vec3 a, const vec3 b)
+    {
+        return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
 
-//------------------------------------------------------------------------------
-// Utility function: Computes the dot product of two vec3 vectors (a . b)
-// and returns the result.
-static inline float vector_dot(const vec3 a, const vec3 b)
-{
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
+    //------------------------------------------------------------------------------
+    // Utility function: Rotates a vec3 vector v around an axis by rad radians
+    // and returns the result.
+    static inline vec3 rotate(const vec3 v, const vec3 axis, float rad)
+    {
+        vec3 normalized_axis = normalize(axis);
+        float cos_theta = cosf(rad);
+        float sin_theta = sinf(rad);
 
-//------------------------------------------------------------------------------
-// Utility function: Rotates a vec3 vector v around an axis by rad radians
-// and returns the result.
-static inline vec3 vector_rotate(const vec3 v, const vec3 axis, float rad)
-{
-    vec3 normalized_axis = vector_normalize(axis);
-    float cos_theta = cosf(rad);
-    float sin_theta = sinf(rad);
+        // Rodrigues' rotation formula
+        vec3 term1 = {v.x * cos_theta, v.y * cos_theta, v.z * cos_theta};
+        vec3 term2 = cross(normalized_axis, v);
+        term2.x *= sin_theta;
+        term2.y *= sin_theta;
+        term2.z *= sin_theta;
+        vec3 term3 = normalized_axis;
+        float dot_product = dot(normalized_axis, v);
+        term3.x *= dot_product * (1.0f - cos_theta);
+        term3.y *= dot_product * (1.0f - cos_theta);
+        term3.z *= dot_product * (1.0f - cos_theta);
 
-    // Rodrigues' rotation formula
-    vec3 term1 = {v.x * cos_theta, v.y * cos_theta, v.z * cos_theta};
-    vec3 term2 = vector_cross(normalized_axis, v);
-    term2.x *= sin_theta;
-    term2.y *= sin_theta;
-    term2.z *= sin_theta;
-    vec3 term3 = normalized_axis;
-    float dot_product = vector_dot(normalized_axis, v);
-    term3.x *= dot_product * (1.0f - cos_theta);
-    term3.y *= dot_product * (1.0f - cos_theta);
-    term3.z *= dot_product * (1.0f - cos_theta);
+        vec3 result;
+        result.x = term1.x + term2.x + term3.x;
+        result.y = term1.y + term2.y + term3.y;
+        result.z = term1.z + term2.z + term3.z;
 
-    vec3 result;
-    result.x = term1.x + term2.x + term3.x;
-    result.y = term1.y + term2.y + term3.y;
-    result.z = term1.z + term2.z + term3.z;
+        return result;
+    }
 
-    return result;
 }
 mat4 perspective_matrix(float width, float height, float fov, float near_plane, float far_plane)
 {
     mat4 matrix = {};
 
     float aspect_ratio = width / height;
-    float fov_rad = 1.0f / tanf(fov * 0.5f * (float)M_PI / 180.0f); // Convert FOV to radians and calculate cotangent
+    float fov_rad = 1.0f / tanf(fov * 0.5f * (float)PI(1.f) / 180.0f); // Convert FOV to radians and calculate cotangent
 
     matrix.m[0].x = fov_rad / aspect_ratio;
     matrix.m[1].y = fov_rad;

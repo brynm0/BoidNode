@@ -60,6 +60,34 @@ transform_component transform_data[MAX_NUM_NODES];
 MeshComponent mesh_data[MAX_NUM_NODES];
 Vec3Component vec3_data[MAX_NUM_NODES];
 
+/**
+ * @struct node_entity
+ * @brief Represents a node entity with unique identification, components, connections, and attributes.
+ *
+ * This structure is used to define a node entity in a system, including its unique ID,
+ * components, input/output connections, editable properties, and associated attributes.
+ *
+ * @var node_entity::id
+ * Unique identifier for the node.
+ *
+ * @var node_entity::components
+ * A 64-bit field representing the components associated with the node.
+ *
+ * @var node_entity::ins
+ * A 64-bit field representing the input connections of the node.
+ *
+ * @var node_entity::outs
+ * A 64-bit field representing the output connections of the node.
+ *
+ * @var node_entity::editables
+ * A 64-bit field representing the editable properties of the node.
+ *
+ * @var node_entity::attributes
+ * A vector of integers representing additional attributes associated with the node.
+ *
+ * @var node_entity::name
+ * A character array (up to 32 characters) representing the display name of the node.
+ */
 typedef struct node_entity
 {
     int id; // Unique node ID
@@ -82,8 +110,33 @@ typedef struct NodeLink
     int end_attr_id;   // Input attribute
 } NodeLink;
 
-/*------------------------------ Context Data ------------------------------*/
-typedef struct graph_context
+/**
+ * @struct graph_context
+ * @brief Represents the context of a graph, containing nodes, links, and attributes.
+ *
+ * This structure is used to manage and store the components of a graph, including
+ * its nodes, links, and attributes. It also maintains counters for generating unique
+ * IDs for nodes, attributes, and links.
+ *
+ * @var graph_context::nodes
+ * A vector containing all the nodes in the graph.
+ *
+ * @var graph_context::links
+ * A vector containing all the links (connections) between nodes in the graph.
+ *
+ * @var graph_context::attributes
+ * A vector containing all the attributes associated with the graph.
+ *
+ * @var graph_context::next_node_id
+ * A counter used to generate unique IDs for new nodes.
+ *
+ * @var graph_context::next_attr_id
+ * A counter used to generate unique IDs for new attributes.
+ *
+ * @var graph_context::next_link_id
+ * A counter used to generate unique IDs for new links.
+ */
+struct graph_context
 {
     std::vector<node_entity> nodes;
     std::vector<NodeLink> links;
@@ -92,7 +145,7 @@ typedef struct graph_context
     u32 next_node_id = 0;
     u32 next_attr_id = 0;
     u32 next_link_id = 0;
-} graph_context;
+};
 
 /*------------------------------ Core Functions ------------------------------*/
 // Initialize new attribute and add to lookup

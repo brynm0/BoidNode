@@ -5,6 +5,15 @@
 #include "imgui_demo.cpp"
 
 static ImGuiIO g_io;
+
+struct imgui_data
+{
+    float frame_time;
+    float boid_trail_len;
+    float boid_max_vel;
+    float boid_max_acc;
+};
+
 static void imgui_init(HWND hwnd)
 {
     IMGUI_CHECKVERSION();
@@ -36,41 +45,45 @@ static void right_click_menu()
 bool show_demo_window = true;
 bool show_another_window = false;
 
-static void basic_ui()
+static void basic_ui(imgui_data *data)
 {
     static float f = 0.0f;
     static int counter = 0;
 
-    ImGui::Begin("Hello, world!"); // Create a window called "Hello, world!" and append into it.
+    ImGui::Begin("Debug Data"); // Create a window called "Hello, world!" and append into it.
 
-    ImGui::Text("This is some useful text.");          // Display some text (you can use a format strings too)
-    ImGui::Checkbox("Demo Window", &show_demo_window); // Edit bools storing our window open/close state
-    ImGui::Checkbox("Another Window", &show_another_window);
+    ImGui::SliderFloat("Boid Trail Mult", &data->boid_trail_len, 0.0f, 5.0f); // Edit 1 float using a slider from 0.0f to 1.0f
+    ImGui::SliderFloat("Boid Max Vel", &data->boid_max_vel, 0.0f, 1.0f);      // Edit 1 float using a slider from 0.0f to 1.0f
+    ImGui::SliderFloat("Boid Max Acc", &data->boid_max_acc, 0.0f, 1.0f);      // Edit 1 float using a slider from 0.0f to 1.0f
 
-    ImGui::SliderFloat("float", &f, 0.0f, 1.0f); // Edit 1 float using a slider from 0.0f to 1.0f
-    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-    ImGui::ColorEdit3("clear color", (float *)&clear_color); // Edit 3 floats representing a color
-
-    if (ImGui::Button("Button")) // Buttons return true when clicked (most widgets return true when edited/activated)
-        counter++;
-    ImGui::SameLine();
-    ImGui::Text("counter = %d", counter);
-
-    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / g_io.Framerate, g_io.Framerate);
+    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f * data->frame_time, 1.0f / data->frame_time);
     ImGui::End();
 }
 
-static void imgui_render(graph_context *context_data)
+static void imgui_render(graph_context *context_data, imgui_data *d)
 {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
 
     // ImGui::ShowDemoWindow(); // Show the demo window (optional)
-    basic_ui();
+    basic_ui(d);
     // Right-click: context menu
 
     draw_node_editor(context_data); // Draw the node editor
+
+    ImGui::Render();
+}
+
+static void imgui_render(imgui_data *d)
+{
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+
+    // ImGui::ShowDemoWindow(); // Show the demo window (optional)
+    basic_ui(d);
+    // Right-click: context menu
 
     ImGui::Render();
 }

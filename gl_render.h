@@ -565,6 +565,23 @@ int gl_line_render_init(int max_lines)
     return 0;
 }
 
+// Define the function pointer type
+typedef BOOL(APIENTRY *PFNWGLSWAPINTERVALEXTPROC)(int);
+
+// Function to disable VSync
+void DisableVSync()
+{
+    // Get the function pointer
+    PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = nullptr;
+    wglSwapIntervalEXT = (PFNWGLSWAPINTERVALEXTPROC)wglGetProcAddress("wglSwapIntervalEXT");
+
+    // Check if the function is available
+    if (wglSwapIntervalEXT)
+    {
+        // Disable VSync
+        wglSwapIntervalEXT(0);
+    }
+}
 // gl_render_init: Initializes the OpenGL renderer by creating an OpenGL context on the
 // provided Win32 window and setting up default shader and VAO objects.
 int gl_render_init(void *windowHandle, int width, int height)
@@ -594,7 +611,7 @@ int gl_render_init(void *windowHandle, int width, int height)
     glCullFace(GL_BACK);
 
     gl_check_error("After OpenGL initialization");
-
+    DisableVSync();
     return 0;
 }
 
@@ -717,12 +734,13 @@ void draw_line_ex(float thickness, vec3 start, vec3 end, vec3 color, GLenum dept
     }
 
     // Store line parameters
-    g_lines.lines[g_lines.count] = (Line){
-        .start = start,
-        .end = end,
-        .color = color,
-        .thickness = thickness,
-        .depth_func = depth_func};
+    g_lines.lines[g_lines.count] = {};
+
+    g_lines.lines[g_lines.count].start = start;
+    g_lines.lines[g_lines.count].end = end;
+    g_lines.lines[g_lines.count].color = color;
+    g_lines.lines[g_lines.count].thickness = thickness;
+    g_lines.lines[g_lines.count].depth_func = depth_func;
     g_lines.count++;
 }
 

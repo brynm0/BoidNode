@@ -38,18 +38,19 @@ const vec3 WORLD_UP = {0.0f, 1.0f, 0.0f};
 vec3 get_camera_right_vec(camera *cam)
 {
     if (!cam)
-        return (vec3){0.0f, 0.0f, 0.0f}; // Return zero vector if camera is null
-
+    {
+        return {0.0f, 0.0f, 0.0f}; // Return zero vector if camera is null
+    }
     // Compute the forward vector (from camera position to target)
     vec3 forward = cam->target - cam->position;
-    forward = vector_normalize(forward);
+    forward = v3::normalize(forward);
 
     // Compute the right vector (perpendicular to forward and up)
-    vec3 right = vector_cross(forward, cam->up);
-    right = vector_normalize(right);
+    vec3 right = v3::cross(forward, cam->up);
+    right = v3::normalize(right);
 
     // Recompute the up vector to ensure orthogonality
-    cam->up = vector_cross(right, forward);
+    cam->up = v3::cross(right, forward);
 
     return right;
 }
@@ -83,24 +84,24 @@ static void update_camera_position(camera *cam)
 
     // 2. Apply pitch rotation first (around the initial right axis, which is WORLD_RIGHT = {1,0,0})
     vec3 initial_right = {0, 0.0f, -1.0f}; // Since offset starts at {distance,0,0}
-    offset = vector_rotate(offset, initial_right, cam->pitch);
+    offset = v3::rotate(offset, initial_right, cam->pitch);
 
     // 3. Apply yaw rotation (around WORLD_UP)
-    offset = vector_rotate(offset, WORLD_UP, cam->yaw);
+    offset = v3::rotate(offset, WORLD_UP, cam->yaw);
 
     // 4. Set the final camera position (target + rotated offset)
     cam->position = cam->target + offset;
 
     // 5. Compute the new forward vector (camera to target)
-    vec3 forward = vector_normalize(cam->target - cam->position);
+    vec3 forward = v3::normalize(cam->target - cam->position);
 
     // 6. Recompute the right vector (perpendicular to forward and WORLD_UP)
-    vec3 right = vector_cross(forward, WORLD_UP);
-    right = vector_normalize(right);
+    vec3 right = v3::cross(forward, WORLD_UP);
+    right = v3::normalize(right);
 
     // 7. Recompute the up vector to ensure no roll
-    cam->up = vector_cross(right, forward);
-    cam->up = vector_normalize(cam->up);
+    cam->up = v3::cross(right, forward);
+    cam->up = v3::normalize(cam->up);
 }
 
 //------------------------------------------------------------------------------
@@ -195,15 +196,15 @@ void process_camera_input(camera *cam, HWND hwnd, UINT msg, WPARAM w_param, LPAR
                 // Panning: Move the camera's position and target parallel to the view plane.
                 // Compute the forward vector (view direction).
                 vec3 forward = cam->target - cam->position;
-                forward = vector_normalize(forward);
+                forward = v3::normalize(forward);
 
                 // Compute the right vector in the view plane using the world up.
-                vec3 right = vector_cross(forward, WORLD_UP);
-                right = vector_normalize(right);
+                vec3 right = v3::cross(forward, WORLD_UP);
+                right = v3::normalize(right);
 
                 // Compute the "pan up" vector as perpendicular to both right and forward.
-                vec3 pan_up = vector_cross(right, forward);
-                pan_up = vector_normalize(pan_up);
+                vec3 pan_up = v3::cross(right, forward);
+                pan_up = v3::normalize(pan_up);
 
                 // Determine pan offsets based on mouse delta and PAN_SPEED.
                 float pan_offset_x = -delta_x * PAN_SPEED;
@@ -288,12 +289,12 @@ mat4 view_matrix_from_cam(const camera *cam)
         return mat4_identity();
 
     // Compute the forward vector (from camera to target)
-    vec3 forward = vector_normalize(cam->target - cam->position);
+    vec3 forward = v3::normalize(cam->target - cam->position);
     // Compute the right vector (must use cam->up to ensure stability)
-    vec3 right = vector_normalize(vector_cross(forward, cam->up));
+    vec3 right = v3::normalize(v3::cross(forward, cam->up));
 
     // Recompute the true up vector (ensures orthogonality)
-    vec3 up = vector_normalize(vector_cross(right, forward));
+    vec3 up = v3::normalize(v3::cross(right, forward));
 
     // Construct the view matrix (column-major)
     mat4 view = {{// Column 0: Right vector
@@ -303,9 +304,9 @@ mat4 view_matrix_from_cam(const camera *cam)
                   // Column 2: Negative forward vector
                   {right.z, up.z, -forward.z, 0.0f},
                   // Column 3: Translation (dot products)
-                  {-vector_dot(right, cam->position),
-                   -vector_dot(up, cam->position),
-                   vector_dot(forward, cam->position),
+                  {-v3::dot(right, cam->position),
+                   -v3::dot(up, cam->position),
+                   v3::dot(forward, cam->position),
                    1.0f}}};
 
     return view;
