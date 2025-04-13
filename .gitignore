@@ -6,3 +6,5 @@ shaders/shader_compile.bat
 *.obj
 main.exe
 line_count.bat
+*.pdb
+*.mtl
