@@ -6,6 +6,7 @@
 #include "string.h"
 #include <vector>
 #include <sstream>
+#include "math_linear.h"
 
 #pragma pack(push, 1) // Ensure tight packing of the struct
 typedef struct vertex

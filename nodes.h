@@ -11,6 +11,7 @@
 #include "io.h"
 #include "types.h"
 #include <cassert>
+#include "gl_render.h"
 
 /*------------------------------ Core Types ------------------------------*/
 // typedef enum NodeType
@@ -47,7 +48,7 @@ struct transform_component
 struct MeshComponent
 {
     Mesh *mesh;
-    gl_mesh *render_data;
+    bgl::gl_mesh *render_data;
 };
 
 struct Vec3Component
@@ -245,7 +246,7 @@ u32 init_mesh_node(graph_context *ctx, Mesh *mesh, const char *name)
     if (mesh)
     {
         mesh_data[node].mesh = mesh;
-        mesh_data[node].render_data = gl_render_add_mesh(mesh);
+        mesh_data[node].render_data = bgl::add_mesh(mesh, false); // TODO this will be broken for now.
     }
     return node;
 }
@@ -540,13 +541,13 @@ void draw_node_editor(graph_context *ctx)
         if ((node.components & COMPONENT_TYPE_MESH) && (node.components & COMPONENT_TYPE_TRANSFORM))
         {
             mesh_data[node.id].render_data->model_matrix =
-                get_model_matrix(transform_data[node.id].position,
-                                 transform_data[node.id].rotation,
-                                 transform_data[node.id].scale);
+                matrix4::get_model_matrix(transform_data[node.id].position,
+                                          transform_data[node.id].rotation,
+                                          transform_data[node.id].scale);
         }
         else if (node.components & COMPONENT_TYPE_MESH)
         {
-            mesh_data[node.id].render_data->model_matrix = mat4_identity();
+            mesh_data[node.id].render_data->model_matrix = matrix4::identity();
         }
     }
 

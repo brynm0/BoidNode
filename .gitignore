@@ -8,3 +8,6 @@ main.exe
 line_count.bat
 *.pdb
 *.mtl
+*.ilk
+*.lib
+*.exe

@@ -10,5 +10,8 @@
 #define i8 int8_t
 #define f32 float
 #define f64 double
-#define v4 ImVec4
+// #define v4 ImVec4
 #define v2 vec2
+
+#define MEGABYTES(x) ((x) * 1024 * 1024)
+#define KILOBYTES(x) ((x) * 1024)

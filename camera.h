@@ -1,4 +1,5 @@
 // Include necessary Windows and math headers.
+#pragma once
 #include <windows.h>
 #include <math.h>
 #include "math_linear.h"
@@ -286,7 +287,7 @@ void process_camera_input(camera *cam, HWND hwnd, UINT msg, WPARAM w_param, LPAR
 mat4 view_matrix_from_cam(const camera *cam)
 {
     if (!cam)
-        return mat4_identity();
+        return matrix4::identity();
 
     // Compute the forward vector (from camera to target)
     vec3 forward = v3::normalize(cam->target - cam->position);

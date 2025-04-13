@@ -23,7 +23,8 @@ namespace simulation
         BOID_TYPE_ALIGN = 1 << 2,
     };
 
-    static float g_max_vel = 0.25f;
+    static float g_max_vel = 0.5f;
+    static float g_min_vel = 0.15f;
     static float g_max_acc = 0.1f;
 
     struct sim_data
@@ -38,14 +39,14 @@ namespace simulation
         u64 num_entities;
         u64 *components; // Array of entity IDs
         u64 *behaviours;
-        vec3 *positions;  // Array of entity positions
+        vec4 *positions;  // Array of entity positions
         vec3 *velocities; // Array of entity velocities
 
         spatial_hash::spatial_hash search_hash;
         void *search_memory_pool;
     };
-
-    static inline void distribute_boids_random(float extents, sim_data *data)
+    static inline void
+    distribute_boids_random(float extents, sim_data *data)
     {
 
         for (u32 i = 0; i < data->num_entities; ++i)
@@ -57,6 +58,7 @@ namespace simulation
             data->positions[i].x = ((float)rand() / RAND_MAX) * 2.0f * extents - extents;
             data->positions[i].y = ((float)rand() / RAND_MAX) * 2.0f * extents - extents;
             data->positions[i].z = ((float)rand() / RAND_MAX) * 2.0f * extents - extents;
+            data->positions[i].w = 1.0f;                                             // ((float)rand() / RAND_MAX) * 2.0f * extents - extents;
             data->behaviours[i] = BOID_TYPE_SEEK | BOID_TYPE_FLEE | BOID_TYPE_ALIGN; // Assign behaviours to the entity
             // Initialize velocities to zero
             data->velocities[i] = {0.0f, 0.0f, 0.0f};
@@ -66,6 +68,11 @@ namespace simulation
     sim_data init_sim(u64 num_entities)
     {
         bool test_result = spatial_hash::test(); // Test the spatial hash function
+        if (!test_result)
+        {
+            int *tmp = nullptr;
+            *tmp = 1;
+        }
         sim_data data = {};
         data.time_step = 0.016f; // 60 FPS
         data.current_time = 0.0f;
@@ -73,13 +80,13 @@ namespace simulation
         data.num_entities = num_entities;
         data.components = (u64 *)malloc(sizeof(u64) * num_entities);
         data.behaviours = (u64 *)malloc(sizeof(u64) * num_entities);
-        data.positions = (vec3 *)malloc(sizeof(vec3) * num_entities);
+        data.positions = (vec4 *)malloc(sizeof(vec4) * num_entities);
         data.velocities = (vec3 *)malloc(sizeof(vec3) * num_entities);
         data.search_memory_pool = malloc(sizeof(vec3) * num_entities); // Allocate memory for the search pool
         memset(data.velocities, 0, sizeof(vec3) * num_entities);       // Initialize velocities to zero
         memset(data.components, 0, sizeof(u64) * num_entities);        // Initialize components to zero
         memset(data.behaviours, 0, sizeof(u64) * num_entities);        // Initialize behaviours to zero
-        memset(data.positions, 0, sizeof(vec3) * num_entities);        // Initialize positions to zero
+        memset(data.positions, 0, sizeof(vec4) * num_entities);        // Initialize positions to zero
 
         distribute_boids_random(1.0f, &data);                                      // Distribute boids randomly in the simulation space
         spatial_hash::init(&data.search_hash, .25f, num_entities, data.positions); // Initialize the spatial hash with the positions
@@ -105,11 +112,11 @@ namespace simulation
 
         spatial_hash::search(&data->search_hash, data->positions[entity_id], radius, search_indices, &search_count);
         vec3 acceleration = {0.0f, 0.0f, 0.0f};
-        vec3 current_position = data->positions[entity_id]; // Assume positions array exists in sim_data
-                                                            // u32 neighbour_count = 0;
+        vec3 current_position = data->positions[entity_id].xyz; // Assume positions array exists in sim_data
+                                                                // u32 neighbour_count = 0;
         for (int i = 0; i < search_count; i++)
         {
-            vec3 neighbour_position = data->search_hash.positions[search_indices[i]];
+            vec3 neighbour_position = data->search_hash.positions[search_indices[i]].xyz;
             vec3 difference = neighbour_position - current_position;
             float distance_squared = v3::dot(difference, difference);
 
@@ -131,7 +138,7 @@ namespace simulation
     {
 
         vec3 average_velocity = {0.0f, 0.0f, 0.0f};
-        vec3 current_position = data->positions[boid_id];
+        vec3 current_position = data->positions[boid_id].xyz;
 
         u32 search_count = 0;
         u32 *search_indices = (u32 *)data->search_memory_pool; // Use the search memory pool for storing results
@@ -142,7 +149,7 @@ namespace simulation
         {
             for (int i = 0; i < search_count; i++)
             {
-                vec3 neighbour_position = data->search_hash.positions[search_indices[i]];
+                vec3 neighbour_position = data->search_hash.positions[search_indices[i]].xyz;
                 vec3 difference = neighbour_position - current_position;
                 float distance_squared = v3::dot(difference, difference);
 
@@ -196,10 +203,14 @@ namespace simulation
                     acceleration = acceleration + boid_align(i, .1f, data);
                 }
             }
-            acceleration = v3::clamp(acceleration, g_max_acc);                          // Clamp acceleration to max value
-            data->velocities[i] = data->velocities[i] + acceleration * delta_time;      // Update velocity
-            data->velocities[i] = v3::clamp(data->velocities[i], g_max_vel);            // Clamp velocity to max value
-            data->positions[i] = data->positions[i] + data->velocities[i] * delta_time; // Update position
+            acceleration = v3::clamp(acceleration, g_max_acc);                     // Clamp acceleration to max value
+            data->velocities[i] = data->velocities[i] + acceleration * delta_time; // Update velocity
+            data->velocities[i] = v3::clamp(data->velocities[i], g_max_vel);       // Clamp velocity to max value
+            if (v3::sq_mag(data->velocities[i]) < g_min_vel * g_min_vel)           // Check if velocity is below minimum threshold
+            {
+                data->velocities[i] = v3::normalize(data->velocities[i]) * g_min_vel; // Normalize and set to minimum velocity
+            }
+            data->positions[i].xyz = data->positions[i].xyz + data->velocities[i] * delta_time; // Update position
         }
 
         spatial_hash::update(&data->search_hash, data->positions, data->num_entities); // Update the spatial hash with new positions

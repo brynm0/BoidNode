@@ -5,47 +5,13 @@
     "tasks": [
         {
             "type": "cppbuild",
-            "label": "C/C++: cl.exe build active file",
-            "command": "cl",
-            "args": [
-                "/EHsc",
-                "/Zi",
-                //"/O2",
-                "/Femain.exe",
-                "main.cpp",
-                "C:\\Users\\Bryn\\Desktop\\Code\\imgui\\imgui.cpp",
-                "C:\\Users\\Bryn\\Desktop\\Code\\imgui\\imgui_draw.cpp",
-                "C:\\Users\\Bryn\\Desktop\\Code\\imgui\\imgui_widgets.cpp",
-                "C:\\Users\\Bryn\\Desktop\\Code\\imgui\\imgui_tables.cpp",
-                "C:\\Users\\Bryn\\Desktop\\Code\\imgui\\backends\\imgui_impl_win32.cpp",
-                "C:\\Users\\Bryn\\Desktop\\Code\\imgui\\backends\\imgui_impl_opengl3.cpp",
-                "C:\\Users\\Bryn\\Desktop\\Code\\imnodes\\imnodes.cpp",
-                "/I",
-                "C:\\Users\\Bryn\\Desktop\\Code\\imnodes",
-                "/I",
-                "C:\\Users\\Bryn\\Desktop\\Code\\imgui",
-                "/I",
-                "C:\\Users\\Bryn\\Desktop\\Code\\imgui\\backends",
-                "/I",
-                "C:\\Users\\Bryn\\Desktop\\Code\\glew-2.1.0\\include",
-                "/link",
-                "/LIBPATH:C:\\Users\\Bryn\\Desktop\\Code\\glew-2.1.0\\lib\\Release\\x64",
-                "glew32s.lib",
-                "opengl32.lib",
-                "gdi32.lib",
-                "dwmapi.lib"
-            ],
-            "options": {
-                "cwd": "${fileDirname}"
-            },
-            "problemMatcher": [
-                "$msCompile"
-            ],
+            "label": "Run compile.bat",
+            "command": "compile.bat",
             "group": {
                 "kind": "build",
                 "isDefault": true
             },
-            "detail": "Task generated for MSVC compiler."
+            "problemMatcher": []
         }
     ],
     "version": "2.0.0"
