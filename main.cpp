@@ -239,7 +239,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     Mesh cone = read_mesh("meshes\\cone.obj");
     bgl::gl_mesh *gl_cone = bgl::add_mesh(&cone, false);
 
-    simulation::sim_data simulation_data = simulation::init_sim(10000);
+    simulation::sim_data simulation_data = simulation::init_sim(5000);
 
     // register_new_mesh_node(&bunny, "Bunny Mesh");
     // init_mesh_node(&graph_context, &bunny, "Bunny Mesh");

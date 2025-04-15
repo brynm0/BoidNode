@@ -14,6 +14,7 @@ namespace simulation
     {
         SIM_COMPONENT_SPATIAL = 1 << 0,
         SIM_COMPONENT_BOID = 1 << 1,
+        SIM_COMPONENT_PLANE = 1 << 2,
     };
 
     enum BOID_TYPES
@@ -21,11 +22,14 @@ namespace simulation
         BOID_TYPE_SEEK = 1 << 0,
         BOID_TYPE_FLEE = 1 << 1,
         BOID_TYPE_ALIGN = 1 << 2,
+        BOID_TYPE_COPLANAR = 1 << 3,
     };
 
     static float g_max_vel = 0.5f;
     static float g_min_vel = 0.15f;
-    static float g_max_acc = 0.1f;
+    static float g_max_acc = 0.25f;
+
+    static float g_cell_size = .25f;
 
     struct sim_data
     {
@@ -61,13 +65,13 @@ namespace simulation
             data->positions[i].w = 1.0f;                                             // ((float)rand() / RAND_MAX) * 2.0f * extents - extents;
             data->behaviours[i] = BOID_TYPE_SEEK | BOID_TYPE_FLEE | BOID_TYPE_ALIGN; // Assign behaviours to the entity
             // Initialize velocities to zero
-            data->velocities[i] = {0.0f, 0.0f, 0.0f};
+            data->velocities[i] = {0.25f, 0.0f, 0.0f};
         }
     }
 
     sim_data init_sim(u64 num_entities)
     {
-#if 1
+#if 0
         bool test_result = spatial_hash::test(); // Test the spatial hash function
         if (!test_result)
         {
@@ -90,8 +94,8 @@ namespace simulation
         memset(data.behaviours, 0, sizeof(u64) * num_entities);        // Initialize behaviours to zero
         memset(data.positions, 0, sizeof(vec4) * num_entities);        // Initialize positions to zero
 
-        distribute_boids_random(1.0f, &data);                                      // Distribute boids randomly in the simulation space
-        spatial_hash::init(&data.search_hash, .25f, num_entities, data.positions); // Initialize the spatial hash with the positions
+        distribute_boids_random(1.0f, &data);                                             // Distribute boids randomly in the simulation space
+        spatial_hash::init(&data.search_hash, g_cell_size, num_entities, data.positions); // Initialize the spatial hash with the positions
 
         return data;
     }
@@ -106,68 +110,47 @@ namespace simulation
         data->positions = NULL;
     }
 
-    static inline vec3 boid_seek(u64 entity_id, float radius, const sim_data *data)
+    static inline vec3 boid_seek(u64 entity_id, float radius, const sim_data *data, u32 num_neighbours, u32 *neighbour_ids)
     {
 
-        u32 search_count = 0;
-        u32 *search_indices = (u32 *)data->search_memory_pool; // Use the search memory pool for storing results
-
-        spatial_hash::search(&data->search_hash, data->positions[entity_id], radius, search_indices, &search_count);
         vec3 acceleration = {0.0f, 0.0f, 0.0f};
         vec3 current_position = data->positions[entity_id].xyz; // Assume positions array exists in sim_data
-                                                                // u32 neighbour_count = 0;
-        for (int i = 0; i < search_count; i++)
+
+        for (int i = 0; i < num_neighbours; i++)
         {
-            vec3 neighbour_position = data->search_hash.positions[search_indices[i]].xyz;
+            vec3 neighbour_position = data->positions[neighbour_ids[i]].xyz;
+
             vec3 difference = neighbour_position - current_position;
             float distance_squared = v3::dot(difference, difference);
 
-            if (distance_squared > 0)
+            if (distance_squared > 0 && distance_squared < radius * radius)
             {
                 acceleration = acceleration + difference;
             }
         }
-        // Average the acceleration vector if there are neighbours
-        if (search_count > 0)
-        {
-            acceleration = acceleration * (1.0f / (float)search_count);
-        }
-
         return acceleration;
     }
 
-    static inline vec3 boid_align(u64 boid_id, float radius, const sim_data *data)
+    static inline vec3 boid_align(u64 boid_id, float radius, const sim_data *data, u32 num_neighbours, u32 *neighbour_ids)
     {
 
         vec3 average_velocity = {0.0f, 0.0f, 0.0f};
         vec3 current_position = data->positions[boid_id].xyz;
 
-        u32 search_count = 0;
-        u32 *search_indices = (u32 *)data->search_memory_pool; // Use the search memory pool for storing results
-
-        spatial_hash::search(&data->search_hash, data->positions[boid_id], radius, search_indices, &search_count);
-
-        if (search_count != 0)
+        if (num_neighbours != 0)
         {
-            for (int i = 0; i < search_count; i++)
+            for (int i = 0; i < num_neighbours; i++)
             {
-                vec3 neighbour_position = data->search_hash.positions[search_indices[i]].xyz;
+                vec3 neighbour_position = data->positions[neighbour_ids[i]].xyz;
                 vec3 difference = neighbour_position - current_position;
                 float distance_squared = v3::dot(difference, difference);
 
-                if (distance_squared > 0)
+                if (distance_squared > 0 && distance_squared < radius * radius)
                 {
-                    average_velocity = average_velocity + data->velocities[search_indices[i]];
+                    vec3 neighbour_velocity = data->velocities[neighbour_ids[i]];
+                    average_velocity = average_velocity + neighbour_velocity;
                 }
             }
-        }
-
-        // Compute the average velocity if there are neighbours
-        if (search_count > 0)
-        {
-            average_velocity = average_velocity * (1.0f / (float)search_count);
-            // Return the alignment vector (difference from current velocity)
-            return average_velocity - data->velocities[boid_id];
         }
 
         // No neighbours, return zero vector
@@ -185,6 +168,12 @@ namespace simulation
             u64 entity_components = data->components[i];
             u64 entity_behaviours = data->behaviours[i];
             vec3 acceleration = {0.0f, 0.0f, 0.0f};
+
+            u32 search_count = 0;
+            u32 *search_indices = (u32 *)data->search_memory_pool; // Use the search memory pool for storing results
+
+            spatial_hash::search(&data->search_hash, data->positions[i], .25f, search_indices, &search_count);
+
             // Check if the entity has a transform component
             if (entity_components & SIM_COMPONENT_SPATIAL)
             {
@@ -192,17 +181,17 @@ namespace simulation
                 // Apply boid behaviours based on the entity's behaviour flags
                 if (entity_behaviours & BOID_TYPE_SEEK)
                 {
-                    acceleration = acceleration + boid_seek(i, .25f, data);
+                    acceleration = acceleration + boid_seek(i, .25f, data, search_count, search_indices);
                 }
 
                 if (entity_behaviours & BOID_TYPE_FLEE)
                 {
-                    acceleration = acceleration - boid_seek(i, .15f, data);
+                    acceleration = acceleration - boid_seek(i, .15f, data, search_count, search_indices);
                 }
 
                 if (entity_behaviours & BOID_TYPE_ALIGN)
                 {
-                    acceleration = acceleration + boid_align(i, .1f, data);
+                    acceleration = acceleration + boid_align(i, .25f, data, search_count, search_indices);
                 }
             }
             acceleration = v3::clamp(acceleration, g_max_acc);                     // Clamp acceleration to max value
@@ -214,8 +203,6 @@ namespace simulation
             }
             data->positions[i].xyz = data->positions[i].xyz + data->velocities[i] * delta_time; // Update position
         }
-
-        spatial_hash::update(&data->search_hash, data->positions, data->num_entities); // Update the spatial hash with new positions
+        spatial_hash::rebuild(&data->search_hash, 0.25f, data->num_entities, data->positions); // Update the spatial hash with new positions
     }
-
 };
