@@ -8,10 +8,12 @@
 #include <immintrin.h> // For AVX2 intrinsics
 #include <random>      // For random number generation in the test function
 #include <malloc.h>    // For _aligned_malloc and _aligned_free on Windows
+#include "morton.h"
+#include "memory_pool.h"
 
 // Replace aligned_alloc with _aligned_malloc and free with _aligned_free
-#define aligned_alloc(alignment, size) _aligned_malloc(size, alignment)
-#define aligned_free(ptr) _aligned_free(ptr)
+// #define aligned_alloc(alignment, size) _aligned_malloc(size, alignment)
+// #define aligned_free(ptr) _aligned_free(ptr)
 
 namespace spatial_hash
 {
@@ -19,11 +21,9 @@ namespace spatial_hash
     // Spatial hash structure updated to support an arbitrary domain.
     typedef struct spatial_hash
     {
-        vec4 *positions; // Original positions.
-        u64 *entity_ids;
-        u32 *hash_table; // Sorted indices (order according to cell assignment).
-        u32 *cell_start; // Start index of each cell (in hash_table).
-        u32 *cell_end;   // End index (one past last) for each cell in hash_table.
+        vec4 *positions; // Original positions, sorted by cell assignment.
+        u32 *cell_start; // Start index of each cell (in positions array).
+        u32 *cell_end;   // End index (one past last) for each cell in positions array.
         float cell_size; // Size of a cell (provided as max_radius).
         // Grid dimensions along each axis.
         u32 grid_size_x;
@@ -33,6 +33,7 @@ namespace spatial_hash
         // Computed domain boundaries.
         vec4 domain_min; // Minimum coordinate across all positions.
         vec4 domain_max; // Maximum coordinate across all positions.
+        mpool::memory_pool pool;
     } spatial_hash;
 
     // Helper function to compute the domain (min and max) of the positions.
@@ -77,6 +78,7 @@ namespace spatial_hash
                 out_max->z = pos.z;
             }
         }
+
         return 1;
     }
 
@@ -115,7 +117,48 @@ namespace spatial_hash
     }
     // --- End of quicksort implementation ---
 
-    ivec3 get_cell_coordinates(const spatial_hash *hash, const vec4 pos)
+    // --- Optimized inline quicksort implementation ---
+    // This function sorts positions directly based on their cell values.
+    static inline void quicksort_positions(vec4 *positions, u32 *cell_vals, int left, int right)
+    {
+        if (left >= right)
+            return;
+
+        // Choose pivot as middle value.
+        int pivot_index = left + (right - left) / 2;
+        u32 pivot = cell_vals[pivot_index];
+
+        int i = left, j = right;
+        while (i <= j)
+        {
+            while (cell_vals[i] < pivot)
+                i++;
+            while (cell_vals[j] > pivot)
+                j--;
+            if (i <= j)
+            {
+                // Swap both the cell values and the positions.
+                u32 temp_cell = cell_vals[i];
+                cell_vals[i] = cell_vals[j];
+                cell_vals[j] = temp_cell;
+
+                // Swap the positions
+                vec4 temp_pos = positions[i];
+                positions[i] = positions[j];
+                positions[j] = temp_pos;
+
+                i++;
+                j--;
+            }
+        }
+        if (left < j)
+            quicksort_positions(positions, cell_vals, left, j);
+        if (i < right)
+            quicksort_positions(positions, cell_vals, i, right);
+    }
+    // --- End of quicksort implementation ---
+
+    uivec3 get_cell_coordinates(const spatial_hash *hash, const vec4 pos)
     {
         float shifted_x = pos.x - hash->domain_min.x;
         float shifted_y = pos.y - hash->domain_min.y;
@@ -133,10 +176,32 @@ namespace spatial_hash
         return {cell_x, cell_y, cell_z};
     }
 
-    int get_cell_index(const spatial_hash *hash, const ivec3 cell_coords)
+    static inline void set_grid_sizes(spatial_hash *h, float max_radius)
     {
-        // Compute the linear index for the 3D grid cell.
+        // Compute grid sizes along each axis.
+        h->grid_size_x = (u32)(ceilf((h->domain_max.x - h->domain_min.x) / max_radius));
+        h->grid_size_y = (u32)(ceilf((h->domain_max.y - h->domain_min.y) / max_radius));
+        h->grid_size_z = (u32)(ceilf((h->domain_max.z - h->domain_min.z) / max_radius));
+    }
+
+    static inline u64 get_cell_index(const spatial_hash *hash, const uivec3 cell_coords)
+    {
+// Compute the linear index for the 3D grid cell.
+#if 0
         return cell_coords.x + cell_coords.y * hash->grid_size_x + cell_coords.z * hash->grid_size_x * hash->grid_size_y;
+#else
+        u64 result = libmorton::morton3D_64_encode(cell_coords.x, cell_coords.y, cell_coords.z);
+        u32 temp_x = 0;
+        u32 temp_y = 0;
+        u32 temp_z = 0;
+        libmorton::morton3D_64_decode(result, temp_x, temp_y, temp_z);
+        return result; // morton3D_encode(cell_coords.x, cell_coords.y, cell_coords.z);
+#endif
+    }
+
+    static inline u32 calc_num_cells(u32 grid_size_x, u32 grid_size_y, u32 grid_size_z)
+    {
+        return libmorton::morton3D_64_encode(grid_size_x, grid_size_y, grid_size_z) + 1;
     }
 
     // Initializes the spatial hash structure.
@@ -150,16 +215,16 @@ namespace spatial_hash
             return;
         }
 
+        hash->pool = mpool::allocate(MEGABYTES(50)); // Allocate memory pool for the hash.
+
         hash->cell_size = max_radius;
         hash->num_positions = num_positions;
 
-        // Allocate memory for positions and the hash table.
-        hash->positions = (vec4 *)_aligned_malloc(sizeof(vec4) * num_positions, 32);
-        hash->hash_table = (u32 *)malloc(sizeof(u32) * num_positions);
-        hash->entity_ids = (u64 *)malloc(sizeof(u64) * num_positions);
-        if (!hash->positions || !hash->hash_table)
+        // Allocate memory for positions.
+        hash->positions = (vec4 *)mpool::get_bytes(&hash->pool, sizeof(vec4) * num_positions);
+        if (!hash->positions)
         {
-            fprintf(stderr, "Error: Memory allocation failed for positions or hash_table\n");
+            fprintf(stderr, "Error: Memory allocation failed for positions\n");
             return;
         }
 
@@ -173,29 +238,20 @@ namespace spatial_hash
         }
 
         // Compute grid sizes along each axis.
-        // Adding 1 to ensure that the max boundary is included.
-        hash->grid_size_x = (u32)(ceilf((hash->domain_max.x - hash->domain_min.x) / max_radius)) + 1;
-        hash->grid_size_y = (u32)(ceilf((hash->domain_max.y - hash->domain_min.y) / max_radius)) + 1;
-        hash->grid_size_z = (u32)(ceilf((hash->domain_max.z - hash->domain_min.z) / max_radius)) + 1;
-        u32 num_cells = hash->grid_size_x * hash->grid_size_y * hash->grid_size_z;
+        set_grid_sizes(hash, max_radius);
+        u32 num_cells = calc_num_cells(hash->grid_size_x, hash->grid_size_y, hash->grid_size_z);
 
         // Allocate arrays for cell boundaries.
-        hash->cell_start = (u32 *)malloc(sizeof(u32) * num_cells);
-        hash->cell_end = (u32 *)malloc(sizeof(u32) * num_cells);
+        hash->cell_start = (u32 *)mpool::get_bytes(&hash->pool, sizeof(u32) * num_cells);
+        hash->cell_end = (u32 *)mpool::get_bytes(&hash->pool, sizeof(u32) * num_cells);
         if (!hash->cell_start || !hash->cell_end)
         {
             fprintf(stderr, "Error: Memory allocation failed for cell_start or cell_end\n");
             return;
         }
 
-        // Initialize hash_table with indices 0 .. num_positions - 1.
-        for (u32 i = 0; i < num_positions; ++i)
-        {
-            hash->hash_table[i] = i;
-        }
-
-        // Allocate temporary array to store computed cell values for each index.
-        u32 *cell_vals = (u32 *)malloc(sizeof(u32) * num_positions);
+        // Allocate temporary array to store computed cell values for each position.
+        u32 *cell_vals = (u32 *)mpool::get_bytes(&hash->pool, sizeof(u32) * num_positions);
         if (!cell_vals)
         {
             fprintf(stderr, "Error: Memory allocation failed for cell_vals\n");
@@ -203,29 +259,15 @@ namespace spatial_hash
         }
 
         // Compute cell assignment for each position.
-        // The cell value is computed by shifting the position by domain_min and then dividing by cell_size.
         for (u32 i = 0; i < num_positions; ++i)
         {
-            vec4 pos = initial_positions[i];
-            float shifted_x = pos.x - hash->domain_min.x;
-            float shifted_y = pos.y - hash->domain_min.y;
-            float shifted_z = pos.z - hash->domain_min.z;
-
-            // Compute cell coordinates.
-            u32 cell_x = (u32)fmaxf(shifted_x / hash->cell_size, 0.0f);
-            u32 cell_y = (u32)fmaxf(shifted_y / hash->cell_size, 0.0f);
-            u32 cell_z = (u32)fmaxf(shifted_z / hash->cell_size, 0.0f);
-
-            // Clamp to grid bounds.
-            cell_x = (cell_x < hash->grid_size_x) ? cell_x : hash->grid_size_x - 1;
-            cell_y = (cell_y < hash->grid_size_y) ? cell_y : hash->grid_size_y - 1;
-            cell_z = (cell_z < hash->grid_size_z) ? cell_z : hash->grid_size_z - 1;
-            cell_vals[i] = cell_x + cell_y * hash->grid_size_x + cell_z * hash->grid_size_x * hash->grid_size_y;
+            vec4 pos = hash->positions[i];
+            uivec3 cell_coords = get_cell_coordinates(hash, pos);
+            cell_vals[i] = get_cell_index(hash, cell_coords);
         }
 
-        // --- Optimized Sorting ---
-        // Replace bubble sort with inline quicksort.
-        quicksort_indices(hash->hash_table, cell_vals, 0, num_positions - 1);
+        // Sort positions and cell_vals together
+        quicksort_positions(hash->positions, cell_vals, 0, num_positions - 1);
 
         // Initialize cell_start and cell_end arrays.
         for (u32 i = 0; i < num_cells; ++i)
@@ -234,20 +276,16 @@ namespace spatial_hash
             hash->cell_end[i] = 0;
         }
 
-        // Populate cell_start and cell_end based on the sorted order in hash_table.
-        // Instead of recomputing the cell coordinates, reuse the precomputed cell_vals.
+        // Populate cell_start and cell_end based on the sorted positions.
         for (u32 i = 0; i < num_positions; ++i)
         {
-            u32 idx = hash->hash_table[i];
-            u32 cell_index = cell_vals[idx];
+            u32 cell_index = cell_vals[i];
             if (hash->cell_start[cell_index] == 0xFFFFFFFF)
             {
                 hash->cell_start[cell_index] = i;
             }
             hash->cell_end[cell_index] = i + 1;
         }
-
-        free(cell_vals);
     }
 
     // Updates the spatial hash with new positions.
@@ -261,21 +299,16 @@ namespace spatial_hash
             return;
         }
 
-        // Free existing memory for positions and hash table.
-        aligned_free(hash->positions);
-        free(hash->hash_table);
-        free(hash->cell_start);
-        free(hash->cell_end);
+        mpool::reset(&hash->pool); // Reset the memory pool for the hash.
 
         // Update the number of positions.
         hash->num_positions = count;
 
-        // Allocate memory for new positions and hash table.
-        hash->positions = (vec4 *)_aligned_malloc(sizeof(vec4) * count, 32);
-        hash->hash_table = (u32 *)malloc(sizeof(u32) * count);
-        if (!hash->positions || !hash->hash_table)
+        // Allocate memory for new positions.
+        hash->positions = (vec4 *)mpool::get_bytes(&hash->pool, sizeof(vec4) * count);
+        if (!hash->positions)
         {
-            fprintf(stderr, "Error: Memory allocation failed for positions or hash_table during update\n");
+            fprintf(stderr, "Error: Memory allocation failed for positions during update\n");
             return;
         }
 
@@ -289,28 +322,20 @@ namespace spatial_hash
         }
 
         // Recompute grid sizes along each axis.
-        hash->grid_size_x = (u32)(ceilf((hash->domain_max.x - hash->domain_min.x) / hash->cell_size)) + 1;
-        hash->grid_size_y = (u32)(ceilf((hash->domain_max.y - hash->domain_min.y) / hash->cell_size)) + 1;
-        hash->grid_size_z = (u32)(ceilf((hash->domain_max.z - hash->domain_min.z) / hash->cell_size)) + 1;
-        u32 num_cells = hash->grid_size_x * hash->grid_size_y * hash->grid_size_z;
+        set_grid_sizes(hash, hash->cell_size);
+        u32 num_cells = calc_num_cells(hash->grid_size_x, hash->grid_size_y, hash->grid_size_z);
 
-        // Allocate memory for cell boundaries.
-        hash->cell_start = (u32 *)malloc(sizeof(u32) * num_cells);
-        hash->cell_end = (u32 *)malloc(sizeof(u32) * num_cells);
+        // Allocate arrays for cell boundaries.
+        hash->cell_start = (u32 *)mpool::get_bytes(&hash->pool, sizeof(u32) * num_cells);
+        hash->cell_end = (u32 *)mpool::get_bytes(&hash->pool, sizeof(u32) * num_cells);
         if (!hash->cell_start || !hash->cell_end)
         {
             fprintf(stderr, "Error: Memory allocation failed for cell_start or cell_end during update\n");
             return;
         }
 
-        // Initialize hash_table with indices 0 .. count - 1.
-        for (u32 i = 0; i < count; ++i)
-        {
-            hash->hash_table[i] = i;
-        }
-
-        // Allocate temporary array to store computed cell values for each index.
-        u32 *cell_vals = (u32 *)malloc(sizeof(u32) * count);
+        // Allocate temporary array to store computed cell values for each position.
+        u32 *cell_vals = (u32 *)mpool::get_bytes(&hash->pool, sizeof(u32) * hash->num_positions);
         if (!cell_vals)
         {
             fprintf(stderr, "Error: Memory allocation failed for cell_vals during update\n");
@@ -320,25 +345,13 @@ namespace spatial_hash
         // Compute cell assignment for each new position.
         for (u32 i = 0; i < count; ++i)
         {
-            vec4 pos = new_positions[i];
-            float shifted_x = pos.x - hash->domain_min.x;
-            float shifted_y = pos.y - hash->domain_min.y;
-            float shifted_z = pos.z - hash->domain_min.z;
-
-            // Compute cell coordinates.
-            u32 cell_x = (u32)fmaxf(shifted_x / hash->cell_size, 0.0f);
-            u32 cell_y = (u32)fmaxf(shifted_y / hash->cell_size, 0.0f);
-            u32 cell_z = (u32)fmaxf(shifted_z / hash->cell_size, 0.0f);
-
-            // Clamp to grid bounds.
-            cell_x = (cell_x < hash->grid_size_x) ? cell_x : hash->grid_size_x - 1;
-            cell_y = (cell_y < hash->grid_size_y) ? cell_y : hash->grid_size_y - 1;
-            cell_z = (cell_z < hash->grid_size_z) ? cell_z : hash->grid_size_z - 1;
-            cell_vals[i] = cell_x + cell_y * hash->grid_size_x + cell_z * hash->grid_size_x * hash->grid_size_y;
+            vec4 pos = hash->positions[i];
+            uivec3 cell_coords = get_cell_coordinates(hash, pos);
+            cell_vals[i] = get_cell_index(hash, cell_coords);
         }
 
-        // --- Optimized Sorting ---
-        quicksort_indices(hash->hash_table, cell_vals, 0, count - 1);
+        // Sort positions and cell_vals together
+        quicksort_positions(hash->positions, cell_vals, 0, count - 1);
 
         // Initialize cell_start and cell_end arrays.
         for (u32 i = 0; i < num_cells; ++i)
@@ -347,19 +360,16 @@ namespace spatial_hash
             hash->cell_end[i] = 0;
         }
 
-        // Populate cell_start and cell_end based on sorted order in hash_table.
+        // Populate cell_start and cell_end based on the sorted positions.
         for (u32 i = 0; i < count; ++i)
         {
-            u32 idx = hash->hash_table[i];
-            u32 cell_index = cell_vals[idx];
+            u32 cell_index = cell_vals[i];
             if (hash->cell_start[cell_index] == 0xFFFFFFFF)
             {
                 hash->cell_start[cell_index] = i;
             }
             hash->cell_end[cell_index] = i + 1;
         }
-
-        free(cell_vals);
     }
 
     static inline void search(const spatial_hash *hash, vec4 position, float radius, u32 *result_indices, u32 *result_count)
@@ -373,8 +383,7 @@ namespace spatial_hash
         *result_count = 0;
         float inv_cell_size = 1.0f / hash->cell_size;
 
-        ivec3 cell_coords = get_cell_coordinates(hash, position);
-        u32 cell_index = get_cell_index(hash, cell_coords);
+        uivec3 cell_coords = get_cell_coordinates(hash, position);
 
         // Adjust query position by the domain minimum.
         float query_x = position.x - hash->domain_min.x;
@@ -394,49 +403,60 @@ namespace spatial_hash
         float radius_sq = radius * radius;
         __m256 radius_squared = _mm256_set1_ps(radius_sq);
 
-        for (int x = min_x; x <= max_x; ++x)
+        for (u32 x = min_x; x <= max_x; ++x)
         {
-            for (int y = min_y; y <= max_y; ++y)
+            for (u32 y = min_y; y <= max_y; ++y)
             {
-                for (int z = min_z; z <= max_z; ++z)
+                for (u32 z = min_z; z <= max_z; ++z)
                 {
                     cell_coords = {(u32)x, (u32)y, (u32)z};
-                    u32 cell_index = get_cell_index(hash, cell_coords);
+                    u64 cell_index = get_cell_index(hash, cell_coords);
+
+                    // Get the start and end indices for this cell
                     u32 start = hash->cell_start[cell_index];
                     u32 end = hash->cell_end[cell_index];
 
+                    // Skip empty cells
+                    if (start == 0xFFFFFFFF)
+                        continue;
+
+                    // Process positions within the cell in chunks of 8 for AVX vectorization
                     for (u32 i = start; i < end; i += 8)
                     {
                         u32 remaining = end - i;
 
-                        // Fallback to scalar loop for less than 8 remaining
+                        // Fallback to scalar loop for less than 8 remaining positions
                         if (remaining < 8)
                         {
                             for (u32 j = 0; j < remaining; ++j)
                             {
-                                u32 index = hash->hash_table[i + j];
-                                vec4 pos = ((vec4 *)hash->positions)[index]; // safe cast
+                                // Direct access to positions array
+                                vec4 pos = hash->positions[i + j];
                                 vec4 diff = pos - position;
                                 float dist_squared = v4::dot(diff, diff); // assumes dot ignores w
                                 if (dist_squared <= radius_sq)
                                 {
-                                    result_indices[*result_count] = index;
+                                    result_indices[*result_count] = i + j;
                                     (*result_count)++;
                                 }
                             }
                             break;
                         }
+
+                        // Vectorized distance calculation for 8 positions at once
                         float *base = (float *)hash->positions; // Reinterpreted as tightly packed floats
+
+                        // Create indices for the current 8 positions
                         __m256i idx = _mm256_set_epi32(
-                            hash->hash_table[i + 7], hash->hash_table[i + 6],
-                            hash->hash_table[i + 5], hash->hash_table[i + 4],
-                            hash->hash_table[i + 3], hash->hash_table[i + 2],
-                            hash->hash_table[i + 1], hash->hash_table[i + 0]);
+                            i + 7, i + 6,
+                            i + 5, i + 4,
+                            i + 3, i + 2,
+                            i + 1, i + 0);
 
                         // Multiply indices by 4 to account for vec4 stride (each vec4 is 4 floats)
                         __m256i idx_scaled = _mm256_slli_epi32(idx, 2); // Shift left by 2 bits (equivalent to *4)
 
-                        // Gather with scale=4 (bytes) to compute correct addresses
+                        // Gather x, y, z components from positions array
                         __m256 pos_x = _mm256_i32gather_ps(base + 0, idx_scaled, 4); // x at offset 0
                         __m256 pos_y = _mm256_i32gather_ps(base + 1, idx_scaled, 4); // y at offset 4
                         __m256 pos_z = _mm256_i32gather_ps(base + 2, idx_scaled, 4); // z at offset 8
@@ -450,16 +470,16 @@ namespace spatial_hash
                             _mm256_mul_ps(dx, dx),
                             _mm256_add_ps(_mm256_mul_ps(dy, dy), _mm256_mul_ps(dz, dz)));
 
-                        // Mask for dist² <= radius²
+                        // Create mask for positions within radius
                         __m256 mask = _mm256_cmp_ps(dist_sq, radius_squared, _CMP_LE_OQ);
                         int mask_bits = _mm256_movemask_ps(mask);
 
-                        // Push matching indices
+                        // Add matching positions to result array
                         for (int j = 0; j < 8; ++j)
                         {
                             if (mask_bits & (1 << j))
                             {
-                                result_indices[*result_count] = hash->hash_table[i + j];
+                                result_indices[*result_count] = i + j;
                                 (*result_count)++;
                             }
                         }
@@ -474,7 +494,9 @@ namespace spatial_hash
     {
         const float max_radius = 0.5f;
         const u32 num_positions = 1000;
-        vec4 *test_positions = (vec4 *)aligned_alloc(32, sizeof(vec4) * num_positions);
+
+        mpool::memory_pool test_pool = mpool::allocate(MEGABYTES(50)); // Allocate memory pool for the test.
+        vec4 *test_positions = (vec4 *)mpool::get_bytes(&test_pool, sizeof(vec4) * num_positions);
 
         std::random_device rd;
         std::mt19937 gen(rd());
@@ -490,7 +512,7 @@ namespace spatial_hash
 
         vec4 search_position = {0.0f, 0.0f, 0.0f, 1.0f};
         float search_radius = max_radius;
-        u32 *result_indices = (u32 *)aligned_alloc(32, sizeof(u32) * num_positions);
+        u32 *result_indices = (u32 *)mpool::get_bytes(&test_pool, sizeof(u32) * num_positions);
         u32 result_count = 0;
 
         search(&hash, search_position, search_radius, result_indices, &result_count);
@@ -513,8 +535,7 @@ namespace spatial_hash
             return 0;
         }
 
-        aligned_free(test_positions);
-        aligned_free(result_indices);
+        mpool::deallocate(&test_pool); // Deallocate the memory pool for the test.
         return 1;
     }
 

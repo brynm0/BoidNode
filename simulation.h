@@ -67,12 +67,14 @@ namespace simulation
 
     sim_data init_sim(u64 num_entities)
     {
+#if 1
         bool test_result = spatial_hash::test(); // Test the spatial hash function
         if (!test_result)
         {
             int *tmp = nullptr;
             *tmp = 1;
         }
+#endif
         sim_data data = {};
         data.time_step = 0.016f; // 60 FPS
         data.current_time = 0.0f;

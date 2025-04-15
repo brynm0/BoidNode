@@ -1,7 +1,7 @@
 @echo off
 
 REM Set the include directories
-set INCLUDE=%INCLUDE%;C:\Users\Bryn\Desktop\Code\imnodes;C:\Users\Bryn\Desktop\Code\imgui;C:\Users\Bryn\Desktop\Code\imgui\backends;C:\Users\Bryn\Desktop\Code\glew-2.1.0\include
+set INCLUDE=%INCLUDE%;C:\Users\Bryn\Desktop\Code\imnodes;C:\Users\Bryn\Desktop\Code\imgui;C:\Users\Bryn\Desktop\Code\imgui\backends;C:\Users\Bryn\Desktop\Code\glew-2.1.0\include;C:\Users\Bryn\Desktop\Code\libmorton\include\libmorton
 
 REM Set the library directories
 set LIB=%LIB%;C:\Users\Bryn\Desktop\Code\glew-2.1.0\lib\Release\x64
@@ -35,5 +35,5 @@ REM  /O2 /Ox /fp:fast /arch:AVX2 /GL
 
 :CompileMain
 REM Compile the program, suppressing normal output and only showing errors and warnings
-cl /nologo /EHsc /Zi  /Femain.exe main.cpp ^
+cl /nologo /EHsc /Zi /O2 /Ox /fp:fast /arch:AVX2 /GL /Femain.exe main.cpp ^
     /link /LIBPATH:C:\Users\Bryn\Desktop\Code\glew-2.1.0\lib\Release\x64 glew32s.lib opengl32.lib gdi32.lib dwmapi.lib user32.lib imgui_wrapper.lib

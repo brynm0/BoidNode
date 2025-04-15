@@ -4,7 +4,7 @@
 
 #define PI(x) ((x) * 3.14159265358979323846f)
 
-struct ivec3
+struct uivec3
 {
     u32 x;
     u32 y;

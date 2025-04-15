@@ -20,7 +20,7 @@ namespace mpool
     memory_pool allocate(u32 size_bytes)
     {
         memory_pool pool;
-        pool.memory = malloc(size_bytes); // Allocate memory
+        pool.memory = _aligned_malloc(size_bytes, 32); // Allocate memory
         if (!pool.memory)
         {
             // Handle allocation failure
@@ -38,6 +38,11 @@ namespace mpool
     // Function to get a portion of memory from the pool
     void *get_bytes(memory_pool *pool, u32 bytes_to_get)
     {
+        if (bytes_to_get % 32 != 0)
+        {
+            // Ensure the requested size is aligned to 32 bytes
+            bytes_to_get += 32 - (bytes_to_get % 32);
+        }
         if (!pool || !pool->memory || pool->offset + bytes_to_get > pool->size)
         {
             // Return NULL if the request cannot be fulfilled
@@ -58,7 +63,7 @@ namespace mpool
     {
         if (pool && pool->memory)
         {
-            free(pool->memory); // Free the allocated memory
+            _aligned_free(pool->memory); // Free the allocated memory
             pool->memory = NULL;
             pool->size = 0;
             pool->offset = 0;
