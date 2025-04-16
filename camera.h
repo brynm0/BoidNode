@@ -1,15 +1,23 @@
-// Include necessary Windows and math headers.
 #pragma once
-#include <windows.h>
+
+// Include platform detection
+#if defined(_WIN32) || defined(_WIN64)
+    #define PLATFORM_WINDOWS 1
+    #include <windows.h>
+#elif defined(__APPLE__)
+    #define PLATFORM_MACOS 1
+    #include <GLFW/glfw3.h>
+#endif
+
 #include <math.h>
 #include "math_linear.h"
 
 // Define movement speeds (tweak these constants as needed)
 #define PAN_SPEED 0.005f  // Speed multiplier for panning
 #define ORBIT_SPEED 0.05f // Speed multiplier for orbit/rotation
-#define ZOOM_STEP 0.1f    // 0.0001f // Speed multiplier for dolly zoom
-//------------------------------------------------------------------------------
-// camera struct definition in C style using vec3 for vectors.
+#define ZOOM_STEP 0.1f    // Speed multiplier for dolly zoom
+
+// Camera struct definition in C style using vec3 for vectors.
 // Holds the camera's position, target, up vector, and orbit parameters.
 typedef struct camera
 {
@@ -24,18 +32,26 @@ typedef struct camera
 // Define the world up vector.
 const vec3 WORLD_UP = {0.0f, 1.0f, 0.0f};
 
-/*
- * @brief Computes the right vector of the camera based on its position, target, and up vector.
- *
- * This function calculates the right vector of the camera, which is perpendicular to both
- * the forward vector (from the camera's position to its target) and the up vector. It also
- * ensures that the up vector is orthogonal to the forward and right vectors by recomputing it.
- *
- * @param cam Pointer to the camera structure. If the pointer is null, a zero vector is returned.
- *
- * @return The right vector of the camera as a normalized vec3. If the camera pointer is null,
- *         a zero vector (vec3{0.0f, 0.0f, 0.0f}) is returned.
- */
+// Platform-specific declarations
+#if PLATFORM_WINDOWS
+void process_camera_input(camera *cam, HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param);
+#elif PLATFORM_MACOS
+void process_camera_input(camera *cam, GLFWwindow* window, int key, int action, int mods);
+#endif
+
+// Function declarations
+vec3 get_camera_right_vec(camera *cam);
+static void update_camera_position(camera *cam);
+mat4 view_matrix_from_cam(const camera *cam);
+
+//------------------------------------------------------------------------------
+// Global variables to store the last mouse position and interaction state.
+static int last_mouse_x = 0;
+static int last_mouse_y = 0;
+static int is_rotating = 0;
+static int is_panning = 0;
+
+// Common function implementations
 vec3 get_camera_right_vec(camera *cam)
 {
     if (!cam)
@@ -56,25 +72,6 @@ vec3 get_camera_right_vec(camera *cam)
     return right;
 }
 
-/**
- * @brief Updates the position and orientation of the camera based on its target, distance, pitch, and yaw.
- *
- * This function recalculates the camera's position, forward, right, and up vectors to ensure
- * it is correctly oriented and positioned relative to its target. The camera's position is
- * determined by applying pitch and yaw rotations to an offset vector, and its orientation
- * vectors are recalculated to maintain a consistent view direction.
- *
- * @param cam Pointer to the camera object to update. If the pointer is null, the function returns immediately.
- *
- * Steps:
- * 1. Initializes the camera's offset position along the X-axis based on its distance from the target.
- * 2. Applies the pitch rotation around the initial right axis.
- * 3. Applies the yaw rotation around the world up axis.
- * 4. Updates the camera's position by adding the rotated offset to the target position.
- * 5. Computes the forward vector as the normalized direction from the camera's position to its target.
- * 6. Computes the right vector as the normalized cross product of the forward vector and the world up vector.
- * 7. Computes the up vector as the normalized cross product of the right and forward vectors to ensure no roll.
- */
 static void update_camera_position(camera *cam)
 {
     if (!cam)
@@ -105,30 +102,37 @@ static void update_camera_position(camera *cam)
     cam->up = v3::normalize(cam->up);
 }
 
-//------------------------------------------------------------------------------
-// Global variables to store the last mouse position and interaction state.
-// These help calculate the delta movement.
-static int last_mouse_x = 0;
-static int last_mouse_y = 0;
-static int is_rotating = 0;
-static int is_panning = 0;
+mat4 view_matrix_from_cam(const camera *cam)
+{
+    if (!cam)
+        return matrix4::identity();
 
-//------------------------------------------------------------------------------
-// Function: process_camera_input
-// Purpose: Processes Windows messages related to mouse input to control the
-// camera. The behavior is as follows:
-//    - Shift + Right Click: Pan the camera (move the target and camera
-//      position parallel to the view plane).
-//    - Right Click (without Shift): Orbit the camera around the target.
-//    - Mouse Wheel: Dolly zoom (adjust the distance from the target).
-//
-// Parameters:
-//    - cam: Pointer to the camera struct to be updated.
-//    - hwnd: Handle to the window (needed for screen-to-client coordinate conversion).
-//    - msg: Windows message identifier.
-//    - w_param, l_param: Message parameters containing details about the input event.
-//
-// Error handling and edge cases are considered (e.g., null camera pointer).
+    // Compute the forward vector (from camera to target)
+    vec3 forward = v3::normalize(cam->target - cam->position);
+    // Compute the right vector (must use cam->up to ensure stability)
+    vec3 right = v3::normalize(v3::cross(forward, cam->up));
+
+    // Recompute the true up vector (ensures orthogonality)
+    vec3 up = v3::normalize(v3::cross(right, forward));
+
+    // Construct the view matrix (column-major)
+    mat4 view = {{// Column 0: Right vector
+                  {right.x, up.x, -forward.x, 0.0f},
+                  // Column 1: Up vector
+                  {right.y, up.y, -forward.y, 0.0f},
+                  // Column 2: Negative forward vector
+                  {right.z, up.z, -forward.z, 0.0f},
+                  // Column 3: Translation (dot products)
+                  {-v3::dot(right, cam->position),
+                   -v3::dot(up, cam->position),
+                   v3::dot(forward, cam->position),
+                   1.0f}}};
+
+    return view;
+}
+
+#if PLATFORM_WINDOWS
+// Windows-specific camera input handling
 void process_camera_input(camera *cam, HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param)
 {
     if (!cam)
@@ -273,42 +277,15 @@ void process_camera_input(camera *cam, HWND hwnd, UINT msg, WPARAM w_param, LPAR
         break;
     }
 }
-
-//------------------------------------------------------------------------------
-// Function: view_matrix_from_cam
-// Purpose: Computes the view matrix for the given camera object.
-// The view matrix transforms world coordinates to camera (view) space.
-//
-// Parameters:
-//    - cam: Pointer to the camera struct.
-//
-// Returns:
-//    - A mat4 representing the view matrix.
-mat4 view_matrix_from_cam(const camera *cam)
+#elif PLATFORM_MACOS
+// macOS-specific camera input handling using GLFW
+void process_camera_input(camera *cam, GLFWwindow* window, int key, int action, int mods)
 {
-    if (!cam)
-        return matrix4::identity();
-
-    // Compute the forward vector (from camera to target)
-    vec3 forward = v3::normalize(cam->target - cam->position);
-    // Compute the right vector (must use cam->up to ensure stability)
-    vec3 right = v3::normalize(v3::cross(forward, cam->up));
-
-    // Recompute the true up vector (ensures orthogonality)
-    vec3 up = v3::normalize(v3::cross(right, forward));
-
-    // Construct the view matrix (column-major)
-    mat4 view = {{// Column 0: Right vector
-                  {right.x, up.x, -forward.x, 0.0f},
-                  // Column 1: Up vector
-                  {right.y, up.y, -forward.y, 0.0f},
-                  // Column 2: Negative forward vector
-                  {right.z, up.z, -forward.z, 0.0f},
-                  // Column 3: Translation (dot products)
-                  {-v3::dot(right, cam->position),
-                   -v3::dot(up, cam->position),
-                   v3::dot(forward, cam->position),
-                   1.0f}}};
-
-    return view;
+    // This is a simplified version - would need full implementation for real use
+    if (!cam || !window)
+        return;
+        
+    // This would need a complete GLFW-based implementation
+    // For now, a simplified placeholder that doesn't do anything
 }
+#endif

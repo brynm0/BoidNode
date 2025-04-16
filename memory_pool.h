@@ -20,7 +20,25 @@ namespace mpool
     memory_pool allocate(u32 size_bytes)
     {
         memory_pool pool;
-        pool.memory = _aligned_malloc(size_bytes, 32); // Allocate memory
+        
+#ifdef __APPLE__
+        // On macOS, use aligned_alloc (available in C11 and later)
+        // aligned_alloc requires size to be a multiple of alignment
+        size_bytes = (size_bytes + 31) & ~31; // Round up to multiple of 32
+        pool.memory = aligned_alloc(32, size_bytes);
+#elif defined(_WIN32) || defined(_WIN64)
+        // On Windows, use _aligned_malloc
+        pool.memory = _aligned_malloc(size_bytes, 32);
+#else
+        // For other platforms, use posix_memalign
+        void* mem = NULL;
+        if (posix_memalign(&mem, 32, size_bytes) == 0) {
+            pool.memory = mem;
+        } else {
+            pool.memory = NULL;
+        }
+#endif
+
         if (!pool.memory)
         {
             // Handle allocation failure
@@ -63,7 +81,11 @@ namespace mpool
     {
         if (pool && pool->memory)
         {
-            _aligned_free(pool->memory); // Free the allocated memory
+#ifdef _WIN32
+            _aligned_free(pool->memory); // Windows-specific aligned free
+#else
+            free(pool->memory); // Standard free works for aligned_alloc and posix_memalign
+#endif
             pool->memory = NULL;
             pool->size = 0;
             pool->offset = 0;

@@ -1,19 +1,33 @@
 #include "types.h"
 #include "math_linear.h"
+#ifdef __APPLE__
+// On macOS, malloc functions are in stdlib.h (already included below)
+#else
 #include "malloc.h"
+#endif
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
 #include <vector>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)
+// Only include AVX2 intrinsics on x86/x64 architectures
 #include <immintrin.h> // For AVX2 intrinsics
+#endif
 #include <random>      // For random number generation in the test function
+#ifdef __APPLE__
+// macOS doesn't have aligned_malloc
+#else
 #include <malloc.h>    // For _aligned_malloc and _aligned_free on Windows
-#include "morton.h"
+#endif
 #include "memory_pool.h"
 
-// Replace aligned_alloc with _aligned_malloc and free with _aligned_free
-// #define aligned_alloc(alignment, size) _aligned_malloc(size, alignment)
-// #define aligned_free(ptr) _aligned_free(ptr)
+// Use libmorton from the installed location
+// We use a path defined in the compile script as LIBMORTON_DIR
+#ifdef __APPLE__
+#include "libmorton/morton.h"
+#else
+#include "morton.h"
+#endif
 
 namespace spatial_hash
 {
@@ -340,14 +354,17 @@ namespace spatial_hash
         int max_z = (int)fminf(cell_coords.z + offset_up, (float)(hash->grid_size_z - 1));
 
         float radius_sq = radius * radius;
+
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)
+        // Use AVX2 intrinsics for x86/x64 architectures
         __m256 radius_squared = _mm256_set1_ps(radius_sq);
+#endif
 
         for (u32 z = min_z; z <= max_z; ++z)
         {
             for (u32 y = min_y; y <= max_y; ++y)
             {
                 for (u32 x = min_x; x <= max_x; ++x)
-
                 {
                     cell_coords = {(u32)x, (u32)y, (u32)z};
                     u64 cell_index = get_cell_index(hash, cell_coords);
@@ -360,7 +377,8 @@ namespace spatial_hash
                     if (start == 0xFFFFFFFF)
                         continue;
 
-                    // Process positions within the cell in chunks of 8 for AVX vectorization
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)
+                    // Process positions within the cell in chunks of 8 with AVX2 (x86/x64 only)
                     for (u32 i = start; i < end; i += 8)
                     {
                         u32 remaining = end - i;
@@ -372,9 +390,7 @@ namespace spatial_hash
                             {
                                 // Direct access to positions array
                                 vec4 pos = hash->positions[i + j];
-                                vec4 diff = pos - position;
-                                // float dist_squared = v4::dot(diff, diff); // assumes dot ignores w
-
+                                
                                 // Compute distance only for x, y, z components (ignore w)
                                 float dx = pos.x - position.x;
                                 float dy = pos.y - position.y;
@@ -390,6 +406,7 @@ namespace spatial_hash
                             }
                             break;
                         }
+                        
                         float *base = (float *)hash->positions;
 
                         __m256i idx = _mm256_set_epi32(
@@ -402,6 +419,7 @@ namespace spatial_hash
                         __m256 pos_x = _mm256_i32gather_ps(base, byte_offsets, 1);     // offset 0
                         __m256 pos_y = _mm256_i32gather_ps(base + 1, byte_offsets, 1); // offset 4 bytes = 1 float
                         __m256 pos_z = _mm256_i32gather_ps(base + 2, byte_offsets, 1); // offset 8 bytes = 2 floats
+                        
                         // Compute distance squared to query point
                         __m256 dx = _mm256_sub_ps(pos_x, _mm256_set1_ps(position.x));
                         __m256 dy = _mm256_sub_ps(pos_y, _mm256_set1_ps(position.y));
@@ -424,6 +442,27 @@ namespace spatial_hash
                             }
                         }
                     }
+#else
+                    // Scalar implementation for ARM and other architectures
+                    for (u32 i = start; i < end; ++i)
+                    {
+                        // Direct access to positions array
+                        vec4 pos = hash->positions[i];
+                        
+                        // Compute distance only for x, y, z components (ignore w)
+                        float dx = pos.x - position.x;
+                        float dy = pos.y - position.y;
+                        float dz = pos.z - position.z;
+                        float dist_squared = dx * dx + dy * dy + dz * dz;
+
+                        // Compare with strict threshold
+                        if (dist_squared <= radius_sq)
+                        {
+                            result_indices[*result_count] = hash->original_ids[i];
+                            (*result_count)++;
+                        }
+                    }
+#endif
                 }
             }
         }

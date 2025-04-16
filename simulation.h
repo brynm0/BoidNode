@@ -1,7 +1,11 @@
 #pragma once
 #include "types.h"
 #include "math_linear.h"
+#ifdef __APPLE__
+// On macOS, malloc functions are in stdlib.h (already included below)
+#else
 #include "malloc.h"
+#endif
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
