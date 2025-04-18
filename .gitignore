@@ -4,10 +4,11 @@
 shaders/shader_compile.bat
 *.spv
 *.obj
-main.exe
 line_count.bat
 *.pdb
 *.mtl
 *.ilk
 *.lib
-*.exe
+*.sqlite
+*.db
+*.suo
