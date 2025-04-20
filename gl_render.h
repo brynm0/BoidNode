@@ -21,6 +21,8 @@
 
 #include "math_linear.h"
 #include "camera.h"
+#include "tracy\public\tracy\Tracy.hpp"
+#include "tracy\public\tracy\TracyOpenGL.hpp"
 
 namespace bgl
 {
@@ -810,7 +812,7 @@ namespace bgl
 
     void start_draw(u32 width, u32 height)
     {
-
+        ZoneScoped;
         glViewport(0, 0, width, height);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         // glEnable(GL_DEPTH_TEST);
@@ -818,6 +820,7 @@ namespace bgl
 
     void render_lines()
     {
+        ZoneScoped;
 
         // Draw lines
 
@@ -860,7 +863,7 @@ namespace bgl
     // Update gl_render_draw to set lighting uniforms
     void draw_statics()
     {
-
+        ZoneScoped;
         glUseProgram(g_shaderProgram);
         for (int i = 0; i < g_meshes.size(); i++)
         {
@@ -945,6 +948,7 @@ namespace bgl
     // Function to render instances
     void render_instances(gl_mesh *mesh, mat4 *model_matrices, u32 count)
     {
+        ZoneScoped;
         if (!mesh || !model_matrices || count == 0)
         {
             fprintf(stderr, "Invalid parameters for render_instances.\n");
@@ -990,7 +994,7 @@ namespace bgl
 
     void end_draw()
     {
-
+        ZoneScoped;
         SwapBuffers(g_hDC);
     }
 

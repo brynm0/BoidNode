@@ -4,6 +4,8 @@
 #include "imgui_impl_opengl3.h"
 // #include "nodes.h"
 #include "imgui_demo.cpp"
+#include "tracy\public\tracy\Tracy.hpp"
+#include "tracy\public\tracy\TracyOpenGL.hpp"
 
 // Implementation of functions moved from imgui_wrapper.h
 
@@ -33,6 +35,7 @@ void imgui_shutdown()
 
 void basic_ui(imgui_data *data)
 {
+    ZoneScoped;
     static float f = 0.0f;
     static int counter = 0;
 
@@ -48,6 +51,8 @@ void basic_ui(imgui_data *data)
 
 void imgui_render(imgui_data *data)
 {
+
+    ZoneScoped;
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
@@ -61,7 +66,7 @@ void imgui_render(imgui_data *data)
 
 void imgui_end_draw()
 {
-
+    ZoneScoped;
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 

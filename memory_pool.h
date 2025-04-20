@@ -6,21 +6,25 @@
 #include <string.h>
 #include "types.h"
 
+#include "tracy\public\tracy\Tracy.hpp"
+#include "tracy\public\tracy\TracyOpenGL.hpp"
+
 namespace mpool
 {
     // Structure to represent a memory pool
     typedef struct
     {
-        void *memory; // Pointer to the allocated memory block
-        u32 size;     // Total size of the memory pool in bytes
-        u32 offset;   // Current offset in the memory pool
+        void *memory;        // Pointer to the allocated memory block
+        volatile u32 size;   // Total size of the memory pool in bytes
+        volatile u32 offset; // Current offset in the memory pool
     } memory_pool;
 
     // Function to allocate a memory pool
     memory_pool allocate(u32 size_bytes)
     {
+        ZoneScoped;
         memory_pool pool;
-        pool.memory = _aligned_malloc(size_bytes, 32); // Allocate memory
+        pool.memory = _aligned_malloc(size_bytes, 64); // Allocate memory
         if (!pool.memory)
         {
             // Handle allocation failure
@@ -38,12 +42,14 @@ namespace mpool
     // Function to get a portion of memory from the pool
     void *get_bytes(memory_pool *pool, u32 bytes_to_get)
     {
-        if (bytes_to_get % 32 != 0)
+        ZoneScoped;
+        u32 bytes_to_get_aligned = bytes_to_get;
+        if (bytes_to_get_aligned % 64 != 0)
         {
             // Ensure the requested size is aligned to 32 bytes
-            bytes_to_get += 32 - (bytes_to_get % 32);
+            bytes_to_get_aligned += 64 - (bytes_to_get_aligned % 64);
         }
-        if (!pool || !pool->memory || pool->offset + bytes_to_get > pool->size)
+        if (!pool || !pool->memory || pool->offset + bytes_to_get_aligned > pool->size)
         {
             // Return NULL if the request cannot be fulfilled
             return NULL;
@@ -72,6 +78,7 @@ namespace mpool
 
     void reset(memory_pool *pool)
     {
+        ZoneScoped;
         if (pool && pool->memory)
         {
             pool->offset = 0; // Reset the offset to reuse the memory

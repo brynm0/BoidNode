@@ -2,8 +2,10 @@
 // A minimal C-style Vulkan program for Windows that renders a red triangle.
 // This version uses hard-coded vertex data from a vertex buffer instead of generating vertices in the shader.
 
-#define WIN32_LEAN_AND_MEAN
+// #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <sysinfoapi.h>
+#include <winnt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
+#include <algorithm>
 
 #include "types.h"
 
@@ -24,6 +27,11 @@
 
 #include "simulation.h"
 #include "memory_pool.h"
+
+#include "boid_thread.h"
+
+#include "tracy\public\tracy\Tracy.hpp"
+#include "tracy\public\tracy\TracyOpenGL.hpp"
 
 // Global declarations for the Win32 window.
 HINSTANCE g_hInstance;
@@ -70,6 +78,8 @@ struct window_rectangle
 
 window_rectangle get_window_rectangle(HWND hwnd)
 {
+
+    ZoneScoped;
     RECT rect;
     GetClientRect(hwnd, &rect);
     window_rectangle win_rect;
@@ -109,7 +119,7 @@ u64 get_current_time_ms()
 
 static inline void draw_axes(f32 line_weight)
 {
-
+    ZoneScoped;
     // Draw X axis in red
     bgl::draw_line_ex(line_weight,
                       vec3(0, 0, 0),
@@ -134,6 +144,7 @@ static inline void draw_axes(f32 line_weight)
 
 static inline void draw_grid(f32 line_weight)
 {
+    ZoneScoped;
     float extents = .5f;
     float spacing = 0.1f;
     vec3 color = vec3(0.5f, 0.5f, 0.5f);
@@ -206,10 +217,122 @@ void debug_draw_spatial_hash(spatial_hash::spatial_hash *hash, float lineweight,
     }
 }
 
+// Structure to hold data for the parallel matrix calculation
+struct InstMatrixCalcData
+{
+    mat4 *matrices;                 // Output matrices
+    simulation::sim_data *sim_data; // Simulation data
+    int start_idx;                  // Start index for this chunk
+    int end_idx;                    // End index for this chunk (exclusive)
+};
+
+// Worker function for parallel instance matrix calculation
+static void calc_matrices_worker(void *data, u32 thread_id, mpool::memory_pool *thread_memory)
+{
+    ZoneScoped;
+    InstMatrixCalcData *calc_data = (InstMatrixCalcData *)data;
+
+    // Process the assigned chunk
+    for (int i = calc_data->start_idx; i < calc_data->end_idx; ++i)
+    {
+        mat4 model_matrix = matrix4::identity();
+        mat4 translate = matrix4::mat4_translate(calc_data->sim_data->positions[i].xyz);
+        mat4 scale = matrix4::mat4_scale({0.1f, 0.1f, 0.1f});
+        mat4 rotation = matrix4::rotate_to(
+            calc_data->sim_data->positions[i].xyz,
+            calc_data->sim_data->positions[i].xyz + calc_data->sim_data->velocities[i]);
+
+        // Multiply matrices in the order: scale, rotation, translation
+        calc_data->matrices[i] = matrix4::mat4_mult(translate, matrix4::mat4_mult(rotation, scale));
+    }
+}
+
+static void calc_instance_matrices(mat4 *instance_matrices, simulation::sim_data *simulation_data)
+{
+    ZoneScoped;
+#if 1
+    // Basic error checking
+    if (!instance_matrices || !simulation_data || simulation_data->num_entities <= 0)
+    {
+        fprintf(stderr, "Error: Invalid inputs to calc_instance_matrices\n");
+        return;
+    }
+
+    // Only use parallel approach if we have enough entities to justify it
+    const int MIN_ENTITIES_FOR_PARALLEL = 1000;
+    const int MAX_CHUNKS = 512; // Maximum number of work chunks
+
+    static mpool::memory_pool mem = mpool::allocate(MEGABYTES(1)); // Allocate memory pool for thread data
+    mpool::reset(&mem);                                            // Reset the memory pool for thread data
+
+    if (simulation_data->num_entities >= MIN_ENTITIES_FOR_PARALLEL && thread_pool::g_thread_pool != nullptr)
+    {
+        // Calculate how many chunks we need
+        u32 num_threads = thread_pool::g_thread_pool->num_threads;
+        int num_chunks = min(num_threads * 8, MAX_CHUNKS);
+
+        // But never use more chunks than entities
+        if (num_chunks > simulation_data->num_entities)
+        {
+            num_chunks = simulation_data->num_entities;
+        }
+
+        // Allocate data for each chunk
+        InstMatrixCalcData *chunk_data = (InstMatrixCalcData *)mpool::get_bytes(&mem, sizeof(InstMatrixCalcData) * num_chunks);
+
+        // malloc(sizeof(InstMatrixCalcData) * num_chunks);
+
+        // Divide work among chunks
+        int base_chunk_size = simulation_data->num_entities / num_chunks;
+        int remainder = simulation_data->num_entities % num_chunks;
+        int current_start = 0;
+
+        // Submit work to thread pool
+        for (int i = 0; i < num_chunks; i++)
+        {
+            // Calculate chunk size (distribute remainder among first chunks)
+            int chunk_size = base_chunk_size + (i < remainder ? 1 : 0);
+
+            // Set up data for this chunk
+            chunk_data[i].matrices = instance_matrices;
+            chunk_data[i].sim_data = simulation_data;
+            chunk_data[i].start_idx = current_start;
+            chunk_data[i].end_idx = current_start + chunk_size;
+
+            // Add work to the thread pool
+            thread_pool::add_work(calc_matrices_worker, &chunk_data[i]);
+
+            current_start += chunk_size;
+        }
+
+        // Wait for all work to complete
+        thread_pool::wait_for_completion();
+
+        // Clean up
+        return;
+    }
+#else
+    // Process the assigned chunk
+
+    for (int i = 0; i < simulation_data->num_entities; ++i)
+    {
+        mat4 model_matrix = matrix4::identity();
+        mat4 translate = matrix4::mat4_translate(simulation_data->positions[i].xyz);
+        mat4 scale = matrix4::mat4_scale({0.1f, 0.1f, 0.1f});
+        mat4 rotation = matrix4::rotate_to(
+            simulation_data->positions[i].xyz,
+            simulation_data->positions[i].xyz + simulation_data->velocities[i]);
+
+        // Multiply matrices in the order: scale, rotation, translation
+        instance_matrices[i] = matrix4::mat4_mult(translate, matrix4::mat4_mult(rotation, scale));
+    }
+#endif
+}
+
 // WinMain entry point.
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
-
+    ZoneScoped;
     camera cam = {};
     cam.position = {1, 1, 1};
     cam.target = {0.0f, 0.0f, 0.0f};
@@ -239,7 +362,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     Mesh cone = read_mesh("meshes\\cone.obj");
     bgl::gl_mesh *gl_cone = bgl::add_mesh(&cone, false);
 
-    simulation::sim_data simulation_data = simulation::init_sim(5000);
+    u32 thread_fail = thread_pool::start_thread_pool(14, 256); // Start the thread pool with 4 threads
+    if (thread_fail != 0)
+    {
+        printf("Thread pool failed to start\n\r");
+        return -1;
+    }
+    simulation::sim_data simulation_data = simulation::init_sim(100000, 5.f);
 
     // register_new_mesh_node(&bunny, "Bunny Mesh");
     // init_mesh_node(&graph_context, &bunny, "Bunny Mesh");
@@ -252,6 +381,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int current_frame_id = 0;
     mpool::memory_pool transient_memory = mpool::allocate(MEGABYTES(50));
     bgl::load_instanced_shaders();
+
     while (!quit)
     {
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
@@ -267,9 +397,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (dt < 0.016f)
         {
             u64 sleep_ms = 16 - (dt * 1000.0f);
-            //  Sleep(sleep_ms);
+            // Sleep(sleep_ms);
             dt = 0.016f;
-            printf("Slept for %llu ms\n\r", sleep_ms);
         }
         static imgui_data ui_data = {0.0, 1.0f, .25, .1f};
 
@@ -281,7 +410,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         {
             ui_data.frame_time += dt_last_ten_frames[i]; // Sum the delta times for the last 10 frames
         }
-        ui_data.frame_time /= 10.f;                   // Update frame time in UI data
+        ui_data.frame_time /= 10.f; // Update frame time in UI data
+        // dt = 0.016f;                                  // Reset dt to a fixed value for simulation
         simulation::update_sim(&simulation_data, dt); // Update simulation logic here
         last_time = current_time;                     // Update last time for the next frame
 
@@ -295,17 +425,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         //  update_links(&graph_context); // Update existing links
         u32 nbytes_instances = sizeof(mat4) * simulation_data.num_entities;
         mat4 *instance_matrices = (mat4 *)mpool::get_bytes(&transient_memory, nbytes_instances);
-        for (int i = 0; i < simulation_data.num_entities; ++i)
-        {
-            mat4 model_matrix = matrix4::identity();
-            mat4 translate = matrix4::mat4_translate(simulation_data.positions[i].xyz);
-            mat4 scale = matrix4::mat4_scale({0.1f, 0.1f, 0.1f});
-            mat4 rotation = matrix4::rotate_to(simulation_data.positions[i].xyz, simulation_data.positions[i].xyz + simulation_data.velocities[i]);
-            // multiply the matrices in the order of scale, rotation, translation to make the model matrix
 
-            model_matrix = matrix4::mat4_mult(translate, matrix4::mat4_mult(rotation, scale));
-            instance_matrices[i] = model_matrix;
-        }
+        calc_instance_matrices(instance_matrices, &simulation_data);
 
         // vk_render_mesh(bunny_id);
         win_rect = get_window_rectangle(g_hWnd);
@@ -327,8 +448,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         bgl::end_draw();
 
         mpool::reset(&transient_memory); // Reset the memory pool for the next frame
+        FrameMark;
     }
-
+    thread_pool::shutdown_thread_pool(); // Stop the thread pool
     mpool::deallocate(&transient_memory);
     bgl::cleanup();
     imgui_shutdown();

@@ -2,6 +2,14 @@
 
 #include <math.h>
 
+// AVX2 intrinsics support, only include if needed
+#if defined(__AVX2__) || (defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64)))
+#define HAS_AVX2 1
+#include <immintrin.h> // Include AVX2 intrinsics header
+#else
+#define HAS_AVX2 0
+#endif
+
 #define PI(x) ((x) * 3.14159265358979323846f)
 
 struct uivec3
@@ -9,6 +17,12 @@ struct uivec3
     u32 x;
     u32 y;
     u32 z;
+};
+
+struct uivec2
+{
+    u32 x;
+    u32 y;
 };
 
 //------------------------------------------------------------------------------
@@ -146,11 +160,98 @@ struct vec2
 
 namespace v3
 {
+#if HAS_AVX2
+    // AVX2-optimized vector operations - these are only used internally when the AVX2 optimizations are enabled
+    static inline vec3 normalize_avx2(const vec3 v)
+    {
+        // Load vector components into XMM registers (we only need 3 components)
+        __m128 vec = _mm_set_ps(0.0f, v.z, v.y, v.x);
+
+        // Calculate squared length: x*x + y*y + z*z
+        __m128 sq = _mm_mul_ps(vec, vec); // [x*x, y*y, z*z, 0]
+
+        // Calculate sum of squares
+        __m128 sum = _mm_hadd_ps(sq, sq); // [x*x+y*y, z*z+0, x*x+y*y, z*z+0]
+        sum = _mm_hadd_ps(sum, sum);      // [x*x+y*y+z*z, ...]
+
+        // Check if length is zero
+        float len_sq;
+        _mm_store_ss(&len_sq, sum);
+
+        if (len_sq < 1e-6f)
+        {
+            return v; // Avoid division by zero
+        }
+
+        // Calculate reciprocal square root (1/sqrt(len_sq))
+        __m128 inv_len = _mm_rsqrt_ps(sum);
+
+        // Multiply vector by inverse length
+        __m128 result = _mm_mul_ps(vec, inv_len);
+
+        // Extract result
+        float temp[4];
+        _mm_storeu_ps(temp, result);
+
+        return {temp[0], temp[1], temp[2]};
+    }
+
+    static inline float dot_avx2(const vec3 a, const vec3 b)
+    {
+        __m128 va = _mm_set_ps(0.0f, a.z, a.y, a.x);
+        __m128 vb = _mm_set_ps(0.0f, b.z, b.y, b.x);
+
+        // Multiply components
+        __m128 mul = _mm_mul_ps(va, vb);
+
+        // Sum all components
+        __m128 sum = _mm_hadd_ps(mul, mul);
+        sum = _mm_hadd_ps(sum, sum);
+
+        // Extract result
+        float result;
+        _mm_store_ss(&result, sum);
+
+        return result;
+    }
+
+    static inline vec3 cross_avx2(const vec3 a, const vec3 b)
+    {
+        // a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x
+        __m128 va = _mm_set_ps(0.0f, a.z, a.y, a.x);
+        __m128 vb = _mm_set_ps(0.0f, b.z, b.y, b.x);
+
+        // Shuffle components for cross product calculation
+        // a.y, a.z, a.x, 0
+        __m128 va_yzx = _mm_shuffle_ps(va, va, _MM_SHUFFLE(3, 0, 2, 1));
+        // a.z, a.x, a.y, 0
+        __m128 va_zxy = _mm_shuffle_ps(va, va, _MM_SHUFFLE(3, 1, 0, 2));
+
+        // b.z, b.x, b.y, 0
+        __m128 vb_zxy = _mm_shuffle_ps(vb, vb, _MM_SHUFFLE(3, 1, 0, 2));
+        // b.y, b.z, b.x, 0
+        __m128 vb_yzx = _mm_shuffle_ps(vb, vb, _MM_SHUFFLE(3, 0, 2, 1));
+
+        // Multiply the shuffled vectors
+        __m128 m1 = _mm_mul_ps(va_yzx, vb_zxy);
+        __m128 m2 = _mm_mul_ps(va_zxy, vb_yzx);
+
+        // Subtract for final result
+        __m128 result = _mm_sub_ps(m1, m2);
+
+        // Extract result
+        float temp[4];
+        _mm_storeu_ps(temp, result);
+
+        return {temp[0], temp[1], temp[2]};
+    }
+#endif
 
     static inline float sq_mag(const vec3 v)
     {
         return v.x * v.x + v.y * v.y + v.z * v.z;
     }
+
     static inline vec3 clamp(const vec3 v, float max_length)
     {
         float len = (float)sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
@@ -164,11 +265,15 @@ namespace v3
         }
         return v; // No change needed
     }
+
     //------------------------------------------------------------------------------
     // Utility function: Normalizes a vec3 vector and returns the result.
     // If the vector length is zero, the function returns the original vector.
     static inline vec3 normalize(const vec3 v)
     {
+#if HAS_AVX2
+        return normalize_avx2(v);
+#else
         float len = (float)sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
         if (len == 0.0f)
             return v; // Avoid division by zero
@@ -177,6 +282,7 @@ namespace v3
         result.y = v.y / len;
         result.z = v.z / len;
         return result;
+#endif
     }
 
     //------------------------------------------------------------------------------
@@ -184,18 +290,27 @@ namespace v3
     // and returns the result.
     static inline vec3 cross(const vec3 a, const vec3 b)
     {
+#if HAS_AVX2
+        return cross_avx2(a, b);
+#else
         vec3 result;
         result.x = a.y * b.z - a.z * b.y;
         result.y = a.z * b.x - a.x * b.z;
         result.z = a.x * b.y - a.y * b.x;
         return result;
+#endif
     }
+
     //------------------------------------------------------------------------------
     // Utility function: Computes the dot product of two vec3 vectors (a . b)
     // and returns the result.
     static inline float dot(const vec3 a, const vec3 b)
     {
+#if HAS_AVX2
+        return dot_avx2(a, b);
+#else
         return a.x * b.x + a.y * b.y + a.z * b.z;
+#endif
     }
 
     //------------------------------------------------------------------------------
@@ -226,13 +341,11 @@ namespace v3
 
         return result;
     }
-
 }
 
 namespace matrix4
 {
-
-    mat4 identity()
+    static inline mat4 identity()
     {
         mat4 matrix = {};
         float temp[16] = {
@@ -244,23 +357,104 @@ namespace matrix4
         memcpy(&matrix.m, temp, 16 * sizeof(float));
 
         return matrix;
+    }
 
-    }; // Identity matrix
+#if HAS_AVX2
+    // AVX2-optimized matrix multiplication - only used internally
+    static inline mat4 mat4_mult_avx2(const mat4 &a, const mat4 &b)
+    {
+        mat4 result = {}; // Initialize result to zeros
 
+        // Process each column of the result
+        for (int col = 0; col < 4; ++col)
+        {
+            // Extract the column from matrix b
+            __m128 b_col = _mm_set_ps(b.m[col].w, b.m[col].z, b.m[col].y, b.m[col].x);
+
+            // For each row of matrix a
+            for (int row = 0; row < 4; ++row)
+            {
+                // Process row of matrix a
+                __m128 a_row = _mm_set_ps(a.m[3].data[row], a.m[2].data[row],
+                                          a.m[1].data[row], a.m[0].data[row]);
+
+                // Calculate dot product of the row and column
+                __m128 mul = _mm_mul_ps(a_row, b_col);
+                __m128 sum = _mm_hadd_ps(mul, mul);
+                sum = _mm_hadd_ps(sum, sum);
+
+                // Store the result in the output matrix
+                float dot_result;
+                _mm_store_ss(&dot_result, sum);
+
+                // Assign to appropriate component based on row
+                switch (row)
+                {
+                case 0:
+                    result.m[col].x = dot_result;
+                    break;
+                case 1:
+                    result.m[col].y = dot_result;
+                    break;
+                case 2:
+                    result.m[col].z = dot_result;
+                    break;
+                case 3:
+                    result.m[col].w = dot_result;
+                    break;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    // AVX2-optimized matrix-vector multiplication - only used internally
+    static inline vec4 mat4_mult_vec4_avx2(const mat4 &m, const vec4 &v)
+    {
+        // Extract the vector components
+        __m128 vec = _mm_set_ps(v.w, v.z, v.y, v.x);
+
+        // Process each component of the resulting vector
+        __m128 result = _mm_setzero_ps();
+
+        for (int i = 0; i < 4; ++i)
+        {
+            // Load column i from the matrix
+            __m128 col = _mm_set_ps(m.m[i].w, m.m[i].z, m.m[i].y, m.m[i].x);
+
+            // Multiply by corresponding vector component and add to result
+            __m128 component = _mm_set1_ps(v.data[i]);
+            result = _mm_add_ps(result, _mm_mul_ps(col, component));
+        }
+
+        // Store the result
+        vec4 output;
+        _mm_storeu_ps(output.data, result);
+
+        return output;
+    }
+#endif
+
+    // Matrix multiplication function that will use AVX2 if available
     mat4 mat4_mult(const mat4 &a, const mat4 &b)
     {
+#if HAS_AVX2
+        return mat4_mult_avx2(a, b);
+#else
         mat4 result = {};
         for (int col = 0; col < 4; ++col) // Iterate over columns of the result
         {
             for (int row = 0; row < 4; ++row) // Iterate over rows of the result
             {
-                result.m[col].x += a.m[0].x * b.m[col].x + a.m[1].x * b.m[col].y + a.m[2].x * b.m[col].z + a.m[3].x * b.m[col].w;
-                result.m[col].y += a.m[0].y * b.m[col].x + a.m[1].y * b.m[col].y + a.m[2].y * b.m[col].z + a.m[3].y * b.m[col].w;
-                result.m[col].z += a.m[0].z * b.m[col].x + a.m[1].z * b.m[col].y + a.m[2].z * b.m[col].z + a.m[3].z * b.m[col].w;
-                result.m[col].w += a.m[0].w * b.m[col].x + a.m[1].w * b.m[col].y + a.m[2].w * b.m[col].z + a.m[3].w * b.m[col].w;
+                result.m[col].data[row] = a.m[0].data[row] * b.m[col].x +
+                                          a.m[1].data[row] * b.m[col].y +
+                                          a.m[2].data[row] * b.m[col].z +
+                                          a.m[3].data[row] * b.m[col].w;
             }
         }
         return result;
+#endif
     }
 
     // Build a scale matrix
@@ -321,6 +515,7 @@ namespace matrix4
         out.m[1].y = c;
         return out;
     }
+
     // Final model matrix builder
     mat4 get_model_matrix(vec3 position, vec3 rotation, vec3 scale)
     {
@@ -339,21 +534,16 @@ namespace matrix4
 
     static vec4 mat4_mult_vec4(const mat4 m, const vec4 v)
     {
+#if HAS_AVX2
+        return mat4_mult_vec4_avx2(m, v);
+#else
         vec4 result;
-
-        // Column 0 contributes x component
         result.x = m.m[0].x * v.x + m.m[1].x * v.y + m.m[2].x * v.z + m.m[3].x * v.w;
-
-        // Column 1 contributes y component
         result.y = m.m[0].y * v.x + m.m[1].y * v.y + m.m[2].y * v.z + m.m[3].y * v.w;
-
-        // Column 2 contributes z component
         result.z = m.m[0].z * v.x + m.m[1].z * v.y + m.m[2].z * v.z + m.m[3].z * v.w;
-
-        // Column 3 contributes w component
         result.w = m.m[0].w * v.x + m.m[1].w * v.y + m.m[2].w * v.z + m.m[3].w * v.w;
-
         return result;
+#endif
     }
 
     mat4 perspective_matrix(float width, float height, float fov, float near_plane, float far_plane)
@@ -424,7 +614,6 @@ namespace matrix4
 
     mat4 rotate_to(vec3 from, vec3 to)
     {
-
         // Calculate the desired direction vector and normalize it.
         vec3 targetDir = v3::normalize(to - from);
         // The original up vector we want to rotate. (0,1,0)
@@ -458,5 +647,4 @@ namespace matrix4
         // Create the rotation matrix that rotates origUp to targetDir.
         return rotate_around_axis(axis, angle);
     }
-
 }
