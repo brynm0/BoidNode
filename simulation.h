@@ -278,7 +278,6 @@ namespace simulation
             if (entity_behaviours & BOID_TYPE_SEEK)
             {
                 acceleration = acceleration + seek_result;
-                vec3 seek_origin = seek_pos - current_position.xyz;
             }
 
             if (entity_behaviours & BOID_TYPE_FLEE)
