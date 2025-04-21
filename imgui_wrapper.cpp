@@ -10,7 +10,7 @@
 // Implementation of functions moved from imgui_wrapper.h
 
 static ImGuiIO g_io;
-void imgui_init(HWND hwnd)
+void imgui_init(void *window_handle)
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -20,7 +20,7 @@ void imgui_init(HWND hwnd)
 
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
-
+    HWND hwnd = (HWND)window_handle;
     // Setup Platform/Renderer bindings
     ImGui_ImplWin32_InitForOpenGL(hwnd);
     ImGui_ImplOpenGL3_Init("#version 150");

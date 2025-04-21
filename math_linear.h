@@ -1,6 +1,7 @@
 #pragma once
 
 #include <math.h>
+#include "string.h"
 
 // AVX2 intrinsics support, only include if needed
 #if defined(__AVX2__) || (defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64)))
@@ -17,12 +18,6 @@ struct uivec3
     u32 x;
     u32 y;
     u32 z;
-};
-
-struct uivec2
-{
-    u32 x;
-    u32 y;
 };
 
 //------------------------------------------------------------------------------

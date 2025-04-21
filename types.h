@@ -15,3 +15,9 @@
 
 #define MEGABYTES(x) ((x) * 1024 * 1024)
 #define KILOBYTES(x) ((x) * 1024)
+
+struct uivec2
+{
+    u32 x;
+    u32 y;
+};

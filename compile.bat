@@ -32,13 +32,45 @@ if exist imgui_wrapper.lib (
         for %%L in (imgui_wrapper.lib) do if %%~tF GTR %%~tL (
             echo Recompiling imgui_wrapper.lib because %%F is newer.
             call compile_imgui.bat
-            goto CompileMain
+            goto CompileBoidWin32
         )
     )
 ) else (
     echo imgui_wrapper.lib not found. Compiling...
     call compile_imgui.bat
 )
+
+:CompileBoidWin32
+REM Check if boid_win32.cpp has been modified since boid_win32.lib was last compiled
+@REM if exist boid_win32.lib (
+@REM     for %%F in (boid_win32.cpp boid_platform.h) do (
+@REM         for %%L in (boid_win32.lib) do if %%~tF GTR %%~tL (
+@REM             echo Recompiling boid_win32.lib because %%F is newer.
+@REM             goto CompileBoidWin32Lib
+@REM         )
+@REM     )
+@REM     echo boid_win32.lib is up to date.
+@REM     goto CompileMain
+@REM ) else (
+@REM     echo boid_win32.lib not found. Compiling...
+@REM     goto CompileBoidWin32Lib
+@REM )
+
+:CompileBoidWin32Lib
+REM Compile boid_win32.cpp as a static library
+echo Compiling boid_win32.lib...
+cl /nologo /EHsc /Zi /c /O2 /Ox /fp:fast /arch:AVX2 /GL boid_win32.cpp
+if %ERRORLEVEL% NEQ 0 (
+    echo Error compiling boid_win32.cpp
+    exit /b %ERRORLEVEL%
+)
+lib /nologo /OUT:boid_win32.lib boid_win32.obj
+if %ERRORLEVEL% NEQ 0 (
+    echo Error creating boid_win32.lib
+    exit /b %ERRORLEVEL%
+)
+echo Successfully compiled boid_win32.lib
+
 REM  /O2 /Ox /fp:fast /arch:AVX2 /GL
 REM  /fsanitize=address
 REM /DTRACY_ENABLE
@@ -46,4 +78,4 @@ REM /DTRACY_ENABLE
 :CompileMain
 REM Compile the program, suppressing normal output and only showing errors and warnings
 cl /nologo /EHsc /Zi  /O2 /Ox /fp:fast /arch:AVX2 /GL /Femain.exe main.cpp tracy\public\TracyClient.cpp ^
-    /link /LIBPATH:C:\Users\Bryn\Desktop\Code\glew-2.1.0\lib\Release\x64 glew32s.lib opengl32.lib gdi32.lib dwmapi.lib user32.lib imgui_wrapper.lib
+    /link /LIBPATH:C:\Users\Bryn\Desktop\Code\glew-2.1.0\lib\Release\x64 glew32s.lib opengl32.lib gdi32.lib dwmapi.lib user32.lib imgui_wrapper.lib boid_win32.lib

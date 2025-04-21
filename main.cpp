@@ -2,10 +2,9 @@
 // A minimal C-style Vulkan program for Windows that renders a red triangle.
 // This version uses hard-coded vertex data from a vertex buffer instead of generating vertices in the shader.
 
-// #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <sysinfoapi.h>
-#include <winnt.h>
+#include "boid_platform.h"
+// #include "boid_win32.cpp"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,12 +32,10 @@
 #include "tracy\public\tracy\Tracy.hpp"
 #include "tracy\public\tracy\TracyOpenGL.hpp"
 
-// Global declarations for the Win32 window.
-HINSTANCE g_hInstance;
-HWND g_hWnd;
+const char *window_class_name = "VulkanWindowClass";
+const char *window_title = "Vulkan Red Triangle";
 
-const char *WINDOW_CLASS_NAME = "VulkanWindowClass";
-const char *WINDOW_TITLE = "Vulkan Red Triangle";
+platform::platform_data g_platform_data = {};
 
 u32 g_win_width = 800;
 u32 g_win_height = 600;
@@ -48,74 +45,6 @@ typedef struct Vertex
 {
     float pos[2]; // X, Y in normalized device coordinates (-1 to 1)
 } Vertex;
-
-// Function to create a Win32 window.
-void InitWindow(HINSTANCE hInstance, int nCmdShow)
-{
-    WNDCLASS wc;
-    memset(&wc, 0, sizeof(wc));
-    wc.lpfnWndProc = WndProc;
-    wc.hInstance = hInstance;
-    wc.lpszClassName = WINDOW_CLASS_NAME;
-    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    RegisterClass(&wc);
-
-    RECT rect = {0, 0, (LONG)g_win_width, (LONG)g_win_height};
-    AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
-    g_hWnd = CreateWindow((LPCSTR)WINDOW_CLASS_NAME, (LPCSTR)WINDOW_TITLE,
-                          WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                          rect.right - rect.left, rect.bottom - rect.top,
-                          NULL, NULL, hInstance, NULL);
-    ShowWindow(g_hWnd, nCmdShow);
-    UpdateWindow(g_hWnd);
-}
-
-struct window_rectangle
-{
-    int width;
-    int height;
-};
-
-window_rectangle get_window_rectangle(HWND hwnd)
-{
-
-    ZoneScoped;
-    RECT rect;
-    GetClientRect(hwnd, &rect);
-    window_rectangle win_rect;
-    win_rect.width = rect.right - rect.left;
-    win_rect.height = rect.bottom - rect.top;
-    return win_rect;
-}
-
-// Function to get the current time in seconds since the program started running.
-u64 get_current_time_ms()
-{
-    static LARGE_INTEGER frequency = {0};
-    static LARGE_INTEGER start_time = {0};
-
-    // Initialize the frequency and start time on the first call
-    if (frequency.QuadPart == 0)
-    {
-        if (!QueryPerformanceFrequency(&frequency))
-        {
-            // If QueryPerformanceFrequency fails, return 0 as an error case
-            return 0;
-        }
-        QueryPerformanceCounter(&start_time);
-    }
-
-    LARGE_INTEGER current_time;
-    if (!QueryPerformanceCounter(&current_time))
-    {
-        // If QueryPerformanceCounter fails, return 0 as an error case
-        return 0;
-    }
-
-    // Calculate the elapsed time in milliseconds
-    u64 elapsed_time_ms = (u64)(((current_time.QuadPart - start_time.QuadPart) * 1000) / frequency.QuadPart);
-    return elapsed_time_ms;
-}
 
 static inline void draw_axes(f32 line_weight)
 {
@@ -342,19 +271,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     Mesh bunny = read_mesh("meshes\\bunny.obj");
 
-    g_hInstance = hInstance;
-    InitWindow(hInstance, nCmdShow);
-    bgl::init(g_hWnd, g_win_width, g_win_height);
-    imgui_init(g_hWnd);
+    g_platform_data.hInstance = hInstance;
+    platform::init_window(&g_platform_data, nCmdShow, window_class_name, window_title, g_win_width, g_win_height, WndProc);
+    bgl::init(g_platform_data.hwnd, g_win_width, g_win_height);
+    imgui_init(g_platform_data.hwnd);
     bgl::line_render_init(100000);
 
     //  graph_context graph_context = init_im_nodes();
 
     // uint32_t bunny_id = vk_render_create_mesh(&bunny);
+
+#if 0 
     MSG msg;
+#else
+    platform::message msg;
+#endif
     int quit = 0;
     mat4 view_matrix = matrix4::identity();
-    window_rectangle win_rect = get_window_rectangle(g_hWnd);
+    platform::window_rectangle win_rect = get_window_rectangle(&g_platform_data);
     mat4 projection_matrix = matrix4::perspective_matrix(win_rect.width, win_rect.height, 60.0f, 0.1f, 100.0f);
 
     bgl::gl_mesh *gl_bunny = bgl::add_mesh(&bunny, true);
@@ -375,7 +309,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // register_new_vec3_node();
     // init_vec3_node(&graph_context, {0, 0, 0});
 
-    u64 start_time = get_current_time_ms(); // Initialize the timer
+    u64 start_time = platform::get_current_time_ms(); // Initialize the timer
     u64 last_time = start_time;
     float dt_last_ten_frames[10] = {};
     int current_frame_id = 0;
@@ -384,6 +318,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     while (!quit)
     {
+#if 0 
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
         {
             if (msg.message == WM_QUIT)
@@ -392,6 +327,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             DispatchMessage(&msg);
             process_camera_input(&cam, g_hWnd, msg.message, msg.wParam, msg.lParam);
         }
+#else
+        while (platform::peek_message(&msg))
+        {
+            if (compare_message(&msg, platform::MSG_QUIT)) // msg.message == WM_QUIT)
+                quit = 1;
+            platform::translate_message(&msg);
+            platform::dispatch_message(&msg);
+            process_camera_input(&cam, &g_platform_data, &msg);
+        }
+
+#endif
         static f32 dt = 1.0f / 60.f; // Initialize delta time
 
         if (dt < 0.016f)
@@ -402,10 +348,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
         static imgui_data ui_data = {0.0, 1.0f, .25, .1f};
 
-        u64 current_time = get_current_time_ms();       // Get the current time
-        dt = (f32)(current_time - last_time) / 1000.0f; // Calculate delta time
-        dt_last_ten_frames[current_frame_id++] = dt;    // Store the delta time for the current frame
-        current_frame_id %= 10;                         // Wrap around the index to keep it within the last 10 frames
+        u64 current_time = platform::get_current_time_ms(); // Get the current time
+        dt = (f32)(current_time - last_time) / 1000.0f;     // Calculate delta time
+        dt_last_ten_frames[current_frame_id++] = dt;        // Store the delta time for the current frame
+        current_frame_id %= 10;                             // Wrap around the index to keep it within the last 10 frames
         for (int i = 0; i < 10; i++)
         {
             ui_data.frame_time += dt_last_ten_frames[i]; // Sum the delta times for the last 10 frames
@@ -429,7 +375,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         calc_instance_matrices(instance_matrices, &simulation_data);
 
         // vk_render_mesh(bunny_id);
-        win_rect = get_window_rectangle(g_hWnd);
+        win_rect = platform::get_window_rectangle(&g_platform_data);
         view_matrix = view_matrix_from_cam(&cam);
         // mat4 mvp = mat4_mult(projection_matrix, view_matrix);
 

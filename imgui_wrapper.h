@@ -9,7 +9,7 @@ struct imgui_data
 };
 
 // Forward declarations for functions moved to imgui_wrapper.cpp
-void imgui_init(HWND hwnd);
+void imgui_init(void *window_handle);
 void imgui_shutdown();
 void basic_ui(imgui_data *data);
 void imgui_render(imgui_data *data);

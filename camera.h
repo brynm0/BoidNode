@@ -1,6 +1,5 @@
 // Include necessary Windows and math headers.
 #pragma once
-#include <windows.h>
 #include <math.h>
 #include "math_linear.h"
 
@@ -129,31 +128,25 @@ static int is_panning = 0;
 //    - w_param, l_param: Message parameters containing details about the input event.
 //
 // Error handling and edge cases are considered (e.g., null camera pointer).
-void process_camera_input(camera *cam, HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param)
+void process_camera_input(camera *cam, platform::platform_data *data, platform::message *msg)
 {
     if (!cam)
         return; // Error handling: Ensure the camera pointer is valid
 
     int mouse_x, mouse_y;
-    switch (msg)
+    switch (platform::get_message_type(msg))
     {
         // Handle right mouse button press.
     // Handle right mouse button press.
-    case WM_RBUTTONDOWN:
+    case platform::MSG_RBUTTONDOWN:
     {
         // Retrieve current mouse position in screen coordinates.
-        POINT pt;
-        if (GetCursorPos(&pt))
-        {
-            // Convert screen coordinates to client coordinates.
-            if (ScreenToClient(hwnd, &pt))
-            {
-                last_mouse_x = pt.x;
-                last_mouse_y = pt.y;
-            }
-        }
+        uivec2 cursor_pos = platform::get_client_cursor_pos(data);
+
+        last_mouse_x = cursor_pos.x;
+        last_mouse_y = cursor_pos.y;
         // Check if the SHIFT key is held down.
-        if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+        if (platform::get_async_key_state(platform::KEY_SHIFT) & 0x8000)
         {
             is_panning = 1;
             is_rotating = 0;
@@ -167,7 +160,7 @@ void process_camera_input(camera *cam, HWND hwnd, UINT msg, WPARAM w_param, LPAR
     }
 
     // Handle right mouse button release.
-    case WM_RBUTTONUP:
+    case platform::MSG_RBUTTONUP:
     {
         // Reset flags when the right button is released.
         is_rotating = 0;
@@ -176,17 +169,20 @@ void process_camera_input(camera *cam, HWND hwnd, UINT msg, WPARAM w_param, LPAR
     }
 
     // Handle mouse movement.
-    case WM_MOUSEMOVE:
+    case platform::MSG_MOUSEMOVE:
     {
         // Process movement only if the right button is held down.
-        if (w_param & MK_RBUTTON)
+        if (platform::compare_w_param(msg, platform::KEY_RBUTTON))
         {
             // l_param contains the current client coordinates.
-            POINT pt;
-            pt.x = LOWORD(l_param);
-            pt.y = HIWORD(l_param);
-            mouse_x = pt.x;
-            mouse_y = pt.y;
+            // POINT pt;
+            // pt.x = LOWORD(l_param);
+            // pt.y = HIWORD(l_param);
+
+            // Retrieve current mouse position in screen coordinates.
+            uivec2 cursor_pos = platform::get_client_cursor_pos(data);
+            mouse_x = cursor_pos.x;
+            mouse_y = cursor_pos.y;
 
             // Calculate the difference from the last recorded mouse position.
             int delta_x = mouse_x - last_mouse_x;
@@ -253,7 +249,7 @@ void process_camera_input(camera *cam, HWND hwnd, UINT msg, WPARAM w_param, LPAR
     case WM_MOUSEWHEEL:
     {
         // Extract the wheel delta (z_delta) from w_param.
-        int z_delta = (short)HIWORD(w_param);
+        int z_delta = platform::extract_wheel_movement(msg);
 
         // Calculate the number of notches scrolled (WHEEL_DELTA is 120).
         int notches = z_delta / WHEEL_DELTA;
