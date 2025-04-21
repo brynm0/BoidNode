@@ -1419,17 +1419,23 @@ namespace mvk
         g_width = width;
         g_height = height;
         
+        printf("MoltenVK init: Starting initialization with window size %dx%d\n", width, height);
+        
         // Step 1: Create Vulkan instance with needed extensions for macOS/MoltenVK
         if (CreateInstance() != VK_SUCCESS) {
             fprintf(stderr, "Failed to create Vulkan instance\n");
             return -1;
         }
         
+        printf("MoltenVK init: Created Vulkan instance\n");
+        
         // Step 2: Create macOS surface
         if (CreateMacOSSurface(windowHandle) != VK_SUCCESS) {
             fprintf(stderr, "Failed to create macOS surface\n");
             return -1;
         }
+        
+        printf("MoltenVK init: Created macOS surface\n");
         
         // Step 3: Select physical device
         pickPhysicalDevice();
@@ -1438,6 +1444,8 @@ namespace mvk
             return -1;
         }
         
+        printf("MoltenVK init: Selected physical device\n");
+        
         // Step 4: Create logical device and queues
         createLogicalDevice();
         if (device == VK_NULL_HANDLE) {
@@ -1445,8 +1453,11 @@ namespace mvk
             return -1;
         }
         
+        printf("MoltenVK init: Created logical device\n");
+        
         // Step 5: Create command pool (needs to happen before swap chain)
         createCommandPool();
+        printf("MoltenVK init: Created command pool\n");
         
         // Step 6: Create swap chain
         createSwapChain();
@@ -1454,6 +1465,8 @@ namespace mvk
             fprintf(stderr, "Failed to create swap chain\n");
             return -1;
         }
+        
+        printf("MoltenVK init: Created swap chain\n");
         
         // Step 7: Create image views
         createImageViews();

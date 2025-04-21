@@ -10,11 +10,26 @@ VULKAN_INCLUDE=${VULKAN_INCLUDE:-"$VULKAN_SDK/macOS/include"}
 VULKAN_LIB=${VULKAN_LIB:-"$VULKAN_SDK/macOS/lib"}
 LIBMORTON_DIR=${LIBMORTON_DIR:-"/Users/brynmurrell/Documents/GitHub/libmorton/include"}
 
+# Enable debug mode by default (can be overridden by providing DEBUG=0)
+DEBUG=${DEBUG:-1}
+
 echo "Using ImGui directory: $IMGUI_DIR"
 echo "Using GLFW directory: $GLFW_DIR"
 echo "Using Vulkan SDK: $VULKAN_SDK"
 echo "Using Vulkan include: $VULKAN_INCLUDE"
 echo "Using libmorton directory: $LIBMORTON_DIR"
+echo "DEBUG mode: $DEBUG"
+
+# Set up compiler flags based on debug mode
+if [ "$DEBUG" -eq 1 ]; then
+    echo "Building ImGui wrapper with debug symbols and minimal optimization..."
+    OPTIMIZATION="-O1"
+    DEBUG_FLAGS="-g -DDEBUG -fno-omit-frame-pointer -fno-inline"
+else
+    echo "Building ImGui wrapper with optimizations for release..."
+    OPTIMIZATION="-O3"
+    DEBUG_FLAGS="-DNDEBUG"
+fi
 
 # Check if we need to use a minimal ImGui implementation for testing
 USE_MINIMAL_IMGUI=1
@@ -93,7 +108,7 @@ EOF
 
     # Compile the minimal implementation
     echo "Compiling minimal ImGui implementation..."
-    clang++ -std=c++11 -c imgui_minimal.cpp -o imgui_wrapper.o \
+    clang++ -std=c++11 $OPTIMIZATION $DEBUG_FLAGS -c imgui_minimal.cpp -o imgui_wrapper.o \
         -I"$GLFW_DIR" -I"." -I"$VULKAN_INCLUDE" -I"$VULKAN_SDK/MoltenVK/include" -DPLATFORM_MACOS=1
     
     # Create the static library
@@ -106,38 +121,38 @@ else
     echo "Compiling ImGui wrapper..."
 
     # Compile ImGui files individually
-    clang++ -std=c++11 -O3 -march=native -c \
+    clang++ -std=c++11 $OPTIMIZATION $DEBUG_FLAGS -march=native -c \
         -I"$IMGUI_DIR" -I"$IMGUI_DIR/backends" -I"$GLFW_DIR" -I"$VULKAN_INCLUDE" -I"$VULKAN_SDK/MoltenVK/include" -I"." \
         -Wno-deprecated-declarations -DPLATFORM_MACOS=1 \
         imgui_wrapper.cpp -o imgui_wrapper.o
 
-    clang++ -std=c++11 -O3 -march=native -c \
+    clang++ -std=c++11 $OPTIMIZATION $DEBUG_FLAGS -march=native -c \
         -I"$IMGUI_DIR" -I"$IMGUI_DIR/backends" -I"$GLFW_DIR" -I"$VULKAN_INCLUDE" -I"$VULKAN_SDK/MoltenVK/include" -I"." \
         -Wno-deprecated-declarations -DPLATFORM_MACOS=1 \
         "$IMGUI_DIR/imgui.cpp" -o imgui.o
 
-    clang++ -std=c++11 -O3 -march=native -c \
+    clang++ -std=c++11 $OPTIMIZATION $DEBUG_FLAGS -march=native -c \
         -I"$IMGUI_DIR" -I"$IMGUI_DIR/backends" -I"$GLFW_DIR" -I"$VULKAN_INCLUDE" -I"$VULKAN_SDK/MoltenVK/include" -I"." \
         -Wno-deprecated-declarations -DPLATFORM_MACOS=1 \
         "$IMGUI_DIR/imgui_draw.cpp" -o imgui_draw.o
 
-    clang++ -std=c++11 -O3 -march=native -c \
+    clang++ -std=c++11 $OPTIMIZATION $DEBUG_FLAGS -march=native -c \
         -I"$IMGUI_DIR" -I"$IMGUI_DIR/backends" -I"$GLFW_DIR" -I"$VULKAN_INCLUDE" -I"$VULKAN_SDK/MoltenVK/include" -I"." \
         -Wno-deprecated-declarations -DPLATFORM_MACOS=1 \
         "$IMGUI_DIR/imgui_widgets.cpp" -o imgui_widgets.o
 
-    clang++ -std=c++11 -O3 -march=native -c \
+    clang++ -std=c++11 $OPTIMIZATION $DEBUG_FLAGS -march=native -c \
         -I"$IMGUI_DIR" -I"$IMGUI_DIR/backends" -I"$GLFW_DIR" -I"$VULKAN_INCLUDE" -I"$VULKAN_SDK/MoltenVK/include" -I"." \
         -Wno-deprecated-declarations -DPLATFORM_MACOS=1 \
         "$IMGUI_DIR/imgui_tables.cpp" -o imgui_tables.o
 
     # For macOS, we would use imgui_impl_glfw.cpp and imgui_impl_metal.cpp
-    clang++ -std=c++11 -O3 -march=native -c \
+    clang++ -std=c++11 $OPTIMIZATION $DEBUG_FLAGS -march=native -c \
         -I"$IMGUI_DIR" -I"$IMGUI_DIR/backends" -I"$GLFW_DIR" -I"$VULKAN_INCLUDE" -I"$VULKAN_SDK/MoltenVK/include" -I"." \
         -Wno-deprecated-declarations -DPLATFORM_MACOS=1 \
         "$IMGUI_DIR/backends/imgui_impl_glfw.cpp" -o imgui_impl_glfw.o
 
-    clang++ -std=c++11 -O3 -march=native -c \
+    clang++ -std=c++11 $OPTIMIZATION $DEBUG_FLAGS -march=native -c \
         -I"$IMGUI_DIR" -I"$IMGUI_DIR/backends" -I"$GLFW_DIR" -I"$VULKAN_INCLUDE" -I"$VULKAN_SDK/MoltenVK/include" -I"." \
         -Wno-deprecated-declarations -DPLATFORM_MACOS=1 \
         "$IMGUI_DIR/backends/imgui_impl_metal.cpp" -o imgui_impl_metal.o
@@ -147,6 +162,12 @@ else
 
     # Clean up object files
     rm -f *.o
+fi
+
+if [ "$DEBUG" -eq 1 ]; then
+    echo "ImGui wrapper compiled with debug symbols."
+else
+    echo "ImGui wrapper compiled for release."
 fi
 
 echo "ImGui wrapper compilation complete."

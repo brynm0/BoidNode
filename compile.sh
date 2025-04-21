@@ -14,6 +14,9 @@ VULKAN_INCLUDE=${VULKAN_INCLUDE:-"$VULKAN_SDK/macOS/include"}
 VULKAN_LIB=${VULKAN_LIB:-"$VULKAN_SDK/macOS/lib"}
 LIBMORTON_DIR=${LIBMORTON_DIR:-"/Users/brynmurrell/Documents/GitHub/libmorton/include"}
 
+# Enable debug mode by default (can be overridden by providing DEBUG=0)
+DEBUG=${DEBUG:-1}
+
 echo "Using paths:"
 echo "IMGUI_DIR: $IMGUI_DIR"
 echo "IMNODES_DIR: $IMNODES_DIR"
@@ -23,6 +26,7 @@ echo "VULKAN_SDK: $VULKAN_SDK"
 echo "VULKAN_INCLUDE: $VULKAN_INCLUDE"
 echo "VULKAN_LIB: $VULKAN_LIB"
 echo "LIBMORTON_DIR: $LIBMORTON_DIR"
+echo "DEBUG mode: $DEBUG"
 
 # Check if imgui_wrapper.a needs to be recompiled
 if [ -f "imgui_wrapper.a" ]; then
@@ -43,11 +47,11 @@ if [ -f "imgui_wrapper.a" ]; then
     fi
     
     if [ $NEEDS_RECOMPILE -eq 1 ]; then
-        VULKAN_SDK=$VULKAN_SDK VULKAN_INCLUDE=$VULKAN_INCLUDE VULKAN_LIB=$VULKAN_LIB ./compile_imgui.sh
+        DEBUG=$DEBUG VULKAN_SDK=$VULKAN_SDK VULKAN_INCLUDE=$VULKAN_INCLUDE VULKAN_LIB=$VULKAN_LIB ./compile_imgui.sh
     fi
 else
     echo "imgui_wrapper.a not found. Compiling..."
-    VULKAN_SDK=$VULKAN_SDK VULKAN_INCLUDE=$VULKAN_INCLUDE VULKAN_LIB=$VULKAN_LIB ./compile_imgui.sh
+    DEBUG=$DEBUG VULKAN_SDK=$VULKAN_SDK VULKAN_INCLUDE=$VULKAN_INCLUDE VULKAN_LIB=$VULKAN_LIB ./compile_imgui.sh
 fi
 
 # Define the ImGui include header (create it if it doesn't exist)
@@ -109,9 +113,22 @@ void* MTLCreateSystemDefaultDevice() { return nullptr; }
 EOF
 fi
 
+# Set up compiler flags based on debug mode
+if [ "$DEBUG" -eq 1 ]; then
+    echo "Building with debug symbols and minimal optimization..."
+    OPTIMIZATION="-O1"
+    DEBUG_FLAGS="-g -DDEBUG -fno-omit-frame-pointer -fno-inline"
+    # Enable Address Sanitizer for memory error detection (uncomment if needed)
+    # DEBUG_FLAGS="$DEBUG_FLAGS -fsanitize=address -fno-optimize-sibling-calls"
+else
+    echo "Building with optimizations for release..."
+    OPTIMIZATION="-O3"
+    DEBUG_FLAGS="-DNDEBUG"
+fi
+
 # Compile main program
 echo "Compiling main program..."
-clang++ -std=c++11 -O3 -march=native -Wno-deprecated-declarations \
+clang++ -std=c++11 -march=native -Wno-deprecated-declarations $OPTIMIZATION $DEBUG_FLAGS \
     -I"$IMGUI_DIR" -I"$IMGUI_DIR/backends" -I"$IMNODES_DIR" -I"$GLFW_DIR" -I"." \
     -I"$VULKAN_INCLUDE" -I"$VULKAN_SDK/MoltenVK/include" -I"$LIBMORTON_DIR" \
     -framework Cocoa -framework IOKit -framework CoreVideo \
@@ -125,6 +142,12 @@ if [ $? -eq 0 ]; then
     
     # Make the executable file executable
     chmod +x main
+    
+    if [ "$DEBUG" -eq 1 ]; then
+        echo "Debug build complete. You can debug with: lldb ./main"
+    else
+        echo "Release build complete."
+    fi
     
     echo "Run the program with ./main"
 else
